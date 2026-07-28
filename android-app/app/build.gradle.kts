@@ -10,8 +10,8 @@ android {
         applicationId = "dev.homelabtv"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
     }
 
     // Release signing comes from environment variables (set by CI from repo

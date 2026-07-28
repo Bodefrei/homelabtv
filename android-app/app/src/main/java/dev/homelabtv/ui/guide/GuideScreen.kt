@@ -68,6 +68,7 @@ import dev.homelabtv.theme.SurfaceColor
 import dev.homelabtv.theme.SurfaceLight
 import dev.homelabtv.theme.TextPrimary
 import dev.homelabtv.theme.TextSecondary
+import dev.homelabtv.ui.components.FlagBadge
 import dev.homelabtv.ui.components.formatClock
 import dev.homelabtv.ui.components.formatDay
 import kotlinx.coroutines.delay
@@ -292,16 +293,22 @@ private fun HeroPanel(focused: Pair<ChannelGuide, Program?>?) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 val episodeLine = program?.episodeLine() ?: ""
-                if (episodeLine.isNotEmpty()) {
+                if (episodeLine.isNotEmpty() || program?.flag != null) {
                     Spacer(Modifier.height(2.dp))
-                    Text(
-                        episodeLine,
-                        color = JellyfinBlue,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlagBadge(program?.flag)
+                        if (program?.flag != null && episodeLine.isNotEmpty()) Spacer(Modifier.width(8.dp))
+                        if (episodeLine.isNotEmpty()) {
+                            Text(
+                                episodeLine,
+                                color = JellyfinBlue,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
                 val start = XmltvTime.parse(program?.start)
                 val stop = XmltvTime.parse(program?.stop)
@@ -529,8 +536,9 @@ private fun ProgramBlock(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            val flagSuffix = slot.program.flag?.let { " · $it" } ?: ""
             Text(
-                "${formatClock(slot.startMillis)} – ${formatClock(slot.stopMillis)}",
+                "${formatClock(slot.startMillis)} – ${formatClock(slot.stopMillis)}$flagSuffix",
                 color = if (focused) Color(0xB3000000) else TextSecondary,
                 fontSize = 10.sp,
                 maxLines = 1,

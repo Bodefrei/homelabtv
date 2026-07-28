@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import os
+import re
 
 def parse_xmltv(file_path):
     """Parses an XMLTV file and extracts the channel definitions."""
@@ -60,6 +61,74 @@ def parse_episode(prog):
             onscreen = text
     return onscreen
 
+# Categories where an untagged airing is NOT assumed to be a rerun
+NON_EPISODIC_CATEGORIES = ('movie', 'film', 'paid program', 'shopping', 'sports')
+
+# Newscast title patterns for feeds that carry no <category> data at all
+# (zap2xml/Gracenote OTA feeds emit none) — extend to taste
+NEWSCAST_TITLE_PREFIXES = ('good day ', 'good morning ')
+NEWSCAST_EXACT_TITLES = ('today', 'early today', 'cbs mornings')
+
+# Titles that never deserve a badge, whatever episode metadata they carry
+UNBADGED_TITLES = ('paid programming', 'paid program')
+
+def _is_newscast(title, categories):
+    if any('news' in c for c in categories):
+        return True
+    t = (title or '').strip().lower()
+    # \bnews\b: "News 8 at 11" and "PBS News Hour" match, the sitcom
+    # "NewsRadio" does not
+    return (
+        re.search(r'\bnews\b', t) is not None
+        or t in NEWSCAST_EXACT_TITLES
+        or any(t.startswith(p) for p in NEWSCAST_TITLE_PREFIXES)
+    )
+
+def _has_episode_identity(prog, title):
+    """A programme is a distinct episode if it has an episode-num, or a
+    sub-title that isn't just the title repeated (shopping-channel feeds
+    duplicate the title into sub-title on every segment)."""
+    if prog.find('episode-num') is not None:
+        return True
+    sub = prog.find('sub-title')
+    return sub is not None and bool(sub.text) and sub.text.strip() != (title or '').strip()
+
+def parse_flag(prog):
+    """Airing-status badge for a programme, tuned to real-world feeds:
+
+    Gracenote-style feeds (zap2xml etc.) only ever tag <new/> — no <live/>,
+    no <previously-shown/>, no categories. So a newscast tagged new is
+    really airing live, and an untagged series episode is a repeat by
+    convention. Some grabbers also stamp <premiere> on every shopping-
+    channel segment; a premiere with no episode identity, no <new/>, and no
+    text is ignored as junk. Movies/paid programming/sports get no badge
+    when untagged."""
+    title_node = prog.find('title')
+    title = title_node.text if title_node is not None else ''
+    if (title or '').strip().lower() in UNBADGED_TITLES:
+        return None
+    categories = [c.text.lower() for c in prog.findall('category') if c.text]
+    is_news = _is_newscast(title, categories)
+    episodic = _has_episode_identity(prog, title)
+    is_new = prog.find('new') is not None
+
+    premiere = prog.find('premiere')
+    if premiere is not None and (episodic or is_new or (premiere.text or '').strip()):
+        return "Premiere"
+    if prog.find('live') is not None:
+        return "Live"
+    if is_new:
+        return "Live" if is_news else "New"
+    if prog.find('previously-shown') is not None:
+        return "Rerun"
+    if is_news:
+        return "News"
+    if any(word in c for c in categories for word in NON_EPISODIC_CATEGORIES):
+        return None
+    if episodic:
+        return "Rerun"
+    return None
+
 def parse_xmltv_programs(file_path):
     """Parses an XMLTV file and extracts the programme schedules."""
     if not os.path.exists(file_path):
@@ -92,7 +161,8 @@ def parse_xmltv_programs(file_path):
                 "title": title,
                 "description": desc,
                 "episode": parse_episode(prog),
-                "episode_title": episode_title
+                "episode_title": episode_title,
+                "flag": parse_flag(prog)
             })
     except Exception as e:
         print(f"Error parsing programmes from {file_path}: {e}")

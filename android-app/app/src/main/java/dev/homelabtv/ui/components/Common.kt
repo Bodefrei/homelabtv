@@ -1,6 +1,7 @@
 package dev.homelabtv.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -25,9 +26,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.homelabtv.theme.JellyfinBlue
+import dev.homelabtv.theme.JellyfinPurple
+import dev.homelabtv.theme.LiveRed
 import dev.homelabtv.theme.OfflineAmber
 import dev.homelabtv.theme.OnlineGreen
 import dev.homelabtv.theme.TextPrimary
@@ -48,6 +52,36 @@ fun ageText(sinceMillis: Long): String {
         minutes < 60 * 24 -> "${minutes / 60}h ago"
         else -> "${minutes / (60 * 24)}d ago"
     }
+}
+
+/** Accent color for an airing-status flag ("New", "Live", "Rerun", ...). */
+fun flagColor(flag: String): Color =
+    when (flag.lowercase(Locale.US)) {
+        "new" -> OnlineGreen
+        "live" -> LiveRed
+        "premiere" -> JellyfinPurple
+        "news" -> JellyfinBlue
+        else -> TextSecondary // Rerun and anything unrecognized stay muted
+    }
+
+/** Airing-status chip ("NEW", "RERUN", "PREMIERE", ...); renders nothing without a flag. */
+@Composable
+fun FlagBadge(flag: String?, modifier: Modifier = Modifier) {
+    if (flag.isNullOrBlank()) return
+    val color = flagColor(flag)
+    Text(
+        flag.uppercase(Locale.US),
+        color = color,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(color.copy(alpha = 0.16f))
+                .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
 
 /** Small "Server online" / "Offline · guide from 3h ago" chip. */

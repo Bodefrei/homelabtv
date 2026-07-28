@@ -49,6 +49,7 @@ import dev.homelabtv.theme.SurfaceColor
 import dev.homelabtv.theme.SurfaceLight
 import dev.homelabtv.theme.TextPrimary
 import dev.homelabtv.theme.TextSecondary
+import dev.homelabtv.ui.components.FlagBadge
 import dev.homelabtv.ui.components.formatClock
 import dev.homelabtv.ui.components.formatDay
 import java.util.Locale
@@ -143,15 +144,21 @@ private fun InfoTab(current: Program?, next: Program?, now: Long) {
                 overflow = TextOverflow.Ellipsis,
             )
             val episodeLine = current?.episodeLine() ?: ""
-            if (episodeLine.isNotEmpty()) {
-                Text(
-                    episodeLine,
-                    color = JellyfinBlue,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (episodeLine.isNotEmpty() || current?.flag != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlagBadge(current?.flag)
+                    if (current?.flag != null && episodeLine.isNotEmpty()) Spacer(Modifier.width(8.dp))
+                    if (episodeLine.isNotEmpty()) {
+                        Text(
+                            episodeLine,
+                            color = JellyfinBlue,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
             val start = XmltvTime.parse(current?.start)
             val stop = XmltvTime.parse(current?.stop)
@@ -220,6 +227,7 @@ private fun InfoTab(current: Program?, next: Program?, now: Long) {
                         val nextStart = XmltvTime.parse(next.start)
                         val nextMeta =
                             listOfNotNull(
+                                    next.flag,
                                     next.episode_title,
                                     next.episode,
                                     nextStart?.let { formatClock(it) },

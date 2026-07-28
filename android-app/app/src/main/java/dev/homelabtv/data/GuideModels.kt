@@ -15,6 +15,8 @@ data class Program(
     val episode: String? = null,
     /** Episode name (from XMLTV sub-title) */
     val episode_title: String? = null,
+    /** Airing status badge: "New", "Rerun", "Premiere", "Live", or "News" */
+    val flag: String? = null,
 )
 
 /** "Episode Name · S2 E6" — whatever parts exist, episode name first. */

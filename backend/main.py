@@ -114,6 +114,19 @@ def xmltv_files():
     except OSError:
         return []
 
+@app.get("/api/xmltv/raw")
+async def get_raw_xmltv(file: str | None = None):
+    """Debug helper: list the XMLTV source files, or download one raw.
+    Only files already discovered by xmltv_files() can be fetched, so this
+    can't be used to read arbitrary paths."""
+    files = xmltv_files()
+    if file is None:
+        return [os.path.basename(p) for p in files]
+    for path in files:
+        if os.path.basename(path) == file:
+            return FileResponse(path, media_type="application/xml")
+    raise HTTPException(status_code=404, detail=f"No XMLTV file named '{file}'")
+
 @app.get("/api/xmltv/channels")
 async def get_xmltv_channels():
     """Reads every XMLTV file in the data directory and returns the available channels."""
@@ -247,6 +260,7 @@ async def get_enriched_guide(request: Request):
                 "description": prog["description"],
                 "episode": prog.get("episode"),
                 "episode_title": prog.get("episode_title"),
+                "flag": prog.get("flag"),
                 "poster_url": None,
                 "backdrop_url": None,
             }

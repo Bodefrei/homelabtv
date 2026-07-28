@@ -53,6 +53,7 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 - Channel zapper bar with progress and "next up"
 - Direct channel number entry from the remote's number pad
 - Detailed info banner (Info / Options tabs) with audio track and closed-caption selection
+- Airing-status badges (New / Rerun / Premiere / Live / News) from XMLTV flags, shown in the info banner and guide
 - Offline-first: last guide sync is cached on the TV as JSON
 - All artwork (TMDB posters/backdrops, remote channel logos) is cached and served by the server, so the TV loads images over the LAN and never needs internet access
 - Resumes on the channel you were last watching
