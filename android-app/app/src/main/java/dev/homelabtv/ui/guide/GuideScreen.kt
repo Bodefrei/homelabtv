@@ -118,7 +118,6 @@ private object GuideSlotCache {
             cachedChunks.clear()
         }
         cachedChunks[rowIndex to chunkIndex] = slots
-        while (cachedChunks.size > 32) cachedChunks.remove(cachedChunks.keys.first())
     }
 }
 
@@ -196,6 +195,25 @@ fun GuideScreen(
         if (channels.isNotEmpty()) {
             listState.scrollToItem(initialRow)
             focusRow(initialRow)
+        }
+    }
+
+    LaunchedEffect(channels, initialRow, windowStart, loadedChunkCount, hasPreparedInitialRow) {
+        if (!hasPreparedInitialRow) return@LaunchedEffect
+
+        val rowOrder = channels.indices.sortedBy { kotlin.math.abs(it - initialRow) }
+        for (rowIndex in rowOrder) {
+            for (chunkIndex in 0 until loadedChunkCount) {
+                if (GuideSlotCache.get(channels, windowStart, rowIndex, chunkIndex) == null) {
+                    val chunkStart = windowStart + chunkIndex * GUIDE_CHUNK_MS
+                    val chunkEnd = minOf(chunkStart + GUIDE_CHUNK_MS, windowEnd)
+                    val slots = withContext(Dispatchers.Default) {
+                        buildSlots(channels[rowIndex].safePrograms, chunkStart, chunkEnd)
+                    }
+                    GuideSlotCache.put(channels, windowStart, rowIndex, chunkIndex, slots)
+                }
+            }
+            delay(10)
         }
     }
 
