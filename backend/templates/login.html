@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HomelabTV – Anmeldung</title>
+    <style>
+        :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
+        body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #15191e; color: #f4f6f8; }
+        main { box-sizing: border-box; width: min(90vw, 390px); padding: 32px; border: 1px solid #303943; border-radius: 14px; background: #20262d; box-shadow: 0 18px 50px #0006; }
+        h1 { margin: 0 0 8px; color: #42b9e8; font-size: 1.65rem; }
+        p { margin: 0 0 24px; color: #b7c0ca; }
+        label { display: block; margin-bottom: 8px; font-size: .95rem; }
+        input { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #53606d; border-radius: 7px; background: #11161b; color: inherit; font: inherit; }
+        input:focus { outline: 2px solid #42b9e8; outline-offset: 2px; }
+        button { width: 100%; margin-top: 16px; padding: 12px; border: 0; border-radius: 7px; background: #0796c9; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+        button:disabled { cursor: wait; opacity: .65; }
+        #error { min-height: 1.4em; margin: 14px 0 0; color: #ff9292; }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>HomelabTV</h1>
+        <p>Bitte mit dem Administrator-Token anmelden.</p>
+        <form id="login-form">
+            <label for="password">Administrator-Passwort</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+            <button id="submit" type="submit">Anmelden</button>
+            <p id="error" role="alert"></p>
+        </form>
+    </main>
+    <script>
+        const form = document.getElementById("login-form");
+        const password = document.getElementById("password");
+        const submit = document.getElementById("submit");
+        const error = document.getElementById("error");
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            submit.disabled = true;
+            error.textContent = "";
+            try {
+                const response = await fetch("/api/v1/admin/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ password: password.value })
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.detail || "Anmeldung fehlgeschlagen.");
+                }
+                location.replace("/");
+            } catch (err) {
+                error.textContent = err.message || "Server nicht erreichbar.";
+                password.select();
+            } finally {
+                submit.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

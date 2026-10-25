@@ -34,6 +34,7 @@
         <div class="header">
             <h1>HomelabTV Settings</h1>
             <div>
+                <button @click="logout">Log out</button>
                 <button @click="fetchData">Refresh Data</button>
             </div>
         </div>
@@ -159,6 +160,10 @@
                 }
             },
             methods: {
+                async logout() {
+                    await fetch('/api/v1/admin/logout', { method: 'POST' });
+                    location.replace('/');
+                },
                 async reviewPairing(approve) {
                     if (!/^[0-9]{6}$/.test(this.pairingCode)) {
                         this.pairingError = true;

@@ -1,5 +1,6 @@
 import os
 import hashlib
+import hmac
 import base64
 import binascii
 import secrets
@@ -9,7 +10,7 @@ import time
 import urllib.parse
 import uuid
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -33,6 +34,12 @@ except ValueError as exc:
 if ADMIN_AUTH_FAILURE_LIMIT < 0:
     raise RuntimeError("HOMELAB_ADMIN_AUTH_FAILURE_LIMIT must be a non-negative integer")
 RATE_LIMIT_WINDOW_SECONDS = 5 * 60
+ADMIN_SESSION_COOKIE = "homelab_admin_session"
+ADMIN_SESSION_LIFETIME_SECONDS = 12 * 60 * 60
+
+
+class AdminLoginRequest(BaseModel):
+    password: str = Field(max_length=512)
 
 
 def generate_pairing_code() -> str:
@@ -157,11 +164,28 @@ def _client_address(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-async def require_admin(request: Request):
-    expected = os.environ.get("HOMELAB_ADMIN_TOKEN", "")
-    if not expected:
-        raise HTTPException(status_code=503, detail="Administrator access is not configured")
+def _admin_session_signature(token: str, issued_at: int) -> str:
+    return hmac.new(
+        token.encode("utf-8"),
+        f"homelab-admin:{issued_at}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
+
+def _has_valid_admin_session(request: Request, token: str) -> bool:
+    value = request.cookies.get(ADMIN_SESSION_COOKIE, "")
+    issued_at_text, separator, signature = value.partition(".")
+    if not separator or not issued_at_text.isdigit():
+        return False
+    issued_at = int(issued_at_text)
+    now = int(time.time())
+    if issued_at > now or now - issued_at >= ADMIN_SESSION_LIFETIME_SECONDS:
+        return False
+    expected_signature = _admin_session_signature(token, issued_at)
+    return secrets.compare_digest(signature, expected_signature)
+
+
+def _has_valid_admin_authorization(request: Request, token: str) -> bool:
     authorization = request.headers.get("authorization", "")
     scheme, separator, credential = authorization.partition(" ")
     candidate = ""
@@ -175,20 +199,34 @@ async def require_admin(request: Request):
                 candidate = password.decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
             candidate = ""
+    return bool(candidate) and secrets.compare_digest(candidate.encode("utf-8"), token.encode("utf-8"))
 
-    if not candidate or not secrets.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8")):
-        if ADMIN_AUTH_FAILURE_LIMIT > 0:
-            db = await get_db_connection()
-            await _enforce_rate_limit(
-                db,
-                f"admin-auth:{_client_address(request)}",
-                ADMIN_AUTH_FAILURE_LIMIT,
-            )
-            await db.close()
+
+async def _record_admin_auth_failure(request: Request):
+    if ADMIN_AUTH_FAILURE_LIMIT == 0:
+        return
+    db = await get_db_connection()
+    await _enforce_rate_limit(
+        db,
+        f"admin-auth:{_client_address(request)}",
+        ADMIN_AUTH_FAILURE_LIMIT,
+    )
+    await db.close()
+
+
+async def require_admin(request: Request):
+    expected = os.environ.get("HOMELAB_ADMIN_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Administrator access is not configured")
+
+    if not (
+        _has_valid_admin_session(request, expected)
+        or _has_valid_admin_authorization(request, expected)
+    ):
+        await _record_admin_auth_failure(request)
         raise HTTPException(
             status_code=401,
             detail="Administrator authentication required",
-            headers={"WWW-Authenticate": 'Basic realm="HomelabTV admin", Bearer'},
         )
 
 
@@ -924,8 +962,55 @@ async def image_proxy(u: str):
 @app.get("/")
 async def ui_home(request: Request):
     """Serve the Web UI for channel mapping."""
-    await require_admin(request)
+    expected = os.environ.get("HOMELAB_ADMIN_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Administrator access is not configured")
+    if not _has_valid_admin_session(request, expected):
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={"request": request},
+        )
     return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
+
+
+@app.post("/api/v1/admin/login")
+async def admin_login(payload: AdminLoginRequest, request: Request):
+    expected = os.environ.get("HOMELAB_ADMIN_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Administrator access is not configured")
+    if not secrets.compare_digest(payload.password.encode("utf-8"), expected.encode("utf-8")):
+        await _record_admin_auth_failure(request)
+        raise HTTPException(status_code=401, detail="Incorrect administrator password")
+
+    db = await get_db_connection()
+    await db.execute(
+        "DELETE FROM pairing_rate_limits WHERE rate_key = ?",
+        (f"admin-auth:{_client_address(request)}",),
+    )
+    await db.commit()
+    await db.close()
+
+    issued_at = int(time.time())
+    response = JSONResponse({"authenticated": True})
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE,
+        f"{issued_at}.{_admin_session_signature(expected, issued_at)}",
+        max_age=ADMIN_SESSION_LIFETIME_SECONDS,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/v1/admin/logout")
+async def admin_logout():
+    response = JSONResponse({"authenticated": False})
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/", httponly=True, samesite="strict")
+    return response
+
 
 def xmltv_files():
     """Every .xml file in the data directory counts as an XMLTV source.

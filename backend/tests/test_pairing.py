@@ -160,17 +160,39 @@ class PairingApiTests(unittest.TestCase):
         )
         self.assertEqual(bad_admin.status_code, 401)
 
-    def test_admin_browser_basic_auth_is_supported_and_mapping_api_is_protected(self):
-        self.assertEqual(self.client.get("/").status_code, 401)
+    def test_admin_browser_uses_login_page_and_mapping_api_is_protected(self):
+        login_page = self.client.get("/")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertIn('id="login-form"', login_page.text)
+        self.assertNotIn("www-authenticate", login_page.headers)
         encoded = base64.b64encode(f"admin:{ADMIN_TOKEN}".encode()).decode()
         headers = {"Authorization": f"Basic {encoded}"}
         page = self.client.get("/", headers=headers)
-        self.assertEqual(page.status_code, 200)
-        self.assertIn('id="pairing-code"', page.text)
-        self.assertIn("/api/v1/pairing/approve", page.text)
-        self.assertIn("/api/v1/pairing/reject", page.text)
+        self.assertIn('id="login-form"', page.text)
         self.assertEqual(self.client.get("/api/mappings").status_code, 401)
         self.assertEqual(self.client.get("/api/mappings", headers=headers).status_code, 200)
+
+    def test_admin_login_creates_session_cookie_for_web_ui(self):
+        invalid = self.client.post(
+            "/api/v1/admin/login",
+            json={"password": "not-the-token"},
+        )
+        self.assertEqual(invalid.status_code, 401)
+
+        logged_in = self.client.post(
+            "/api/v1/admin/login",
+            json={"password": ADMIN_TOKEN},
+        )
+        self.assertEqual(logged_in.status_code, 200)
+        self.assertIn("httponly", logged_in.headers["set-cookie"].lower())
+        self.assertIn("samesite=strict", logged_in.headers["set-cookie"].lower())
+        self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertEqual(self.client.get("/api/mappings").status_code, 200)
+
+        logged_out = self.client.post("/api/v1/admin/logout")
+        self.assertEqual(logged_out.status_code, 200)
+        self.assertIn("max-age=0", logged_out.headers["set-cookie"].lower())
+        self.assertIn('id="login-form"', self.client.get("/").text)
 
     def test_revoked_credential_is_rejected(self):
         payload = self.pair_payload()
