@@ -159,6 +159,9 @@ IMAGE_EXT_BY_TYPE = {
     "image/svg+xml": ".svg",
 }
 MAX_CACHED_IMAGE_BYTES = 10 * 1024 * 1024
+IMAGE_FETCH_HEADERS = {
+    "User-Agent": "HomelabTV/1.0 (https://github.com/Bodefrei/homelabtv)",
+}
 
 @app.on_event("startup")
 async def startup():
@@ -1345,7 +1348,7 @@ async def _cache_remote_image(url: str) -> str | None:
 
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            async with client.stream("GET", url) as response:
+            async with client.stream("GET", url, headers=IMAGE_FETCH_HEADERS) as response:
                 response.raise_for_status()
                 final_url = urllib.parse.urlparse(str(response.url))
                 if final_url.scheme not in ("http", "https") or _is_blocked_host(final_url.hostname):

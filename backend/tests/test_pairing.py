@@ -682,9 +682,11 @@ class PairingApiTests(unittest.TestCase):
 
         async def run():
             requests = []
+            user_agents = []
 
             async def handler(request):
                 requests.append(request.url)
+                user_agents.append(request.headers.get("user-agent"))
                 return httpx.Response(
                     200,
                     headers={"content-type": "image/png"},
@@ -700,13 +702,17 @@ class PairingApiTests(unittest.TestCase):
                 first = await main._cache_remote_image(url)
                 second = await main._cache_remote_image(url)
             await client.aclose()
-            return first, second, requests
+            return first, second, requests, user_agents
 
-        first, second, requests = asyncio.run(run())
+        first, second, requests, user_agents = asyncio.run(run())
 
         self.assertEqual(first, second)
         self.assertTrue(first.startswith("/static/imgcache/"))
         self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            user_agents,
+            ["HomelabTV/1.0 (https://github.com/Bodefrei/homelabtv)"],
+        )
         cached_image = cache_dir / Path(first).name
         self.assertEqual(cached_image.read_bytes(), b"\x89PNG\r\n\x1a\nlogo")
 
