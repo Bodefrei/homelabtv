@@ -1520,7 +1520,16 @@ async def save_mapping(mapping: MappingRequest, request: Request):
     await require_admin(request)
     db = await get_db_connection()
     await db.execute(
-        "INSERT OR REPLACE INTO channel_mappings (physical_channel, xmltv_id, custom_name, custom_image, xml_source) VALUES (?, ?, ?, ?, ?)",
+        """
+        INSERT INTO channel_mappings
+            (physical_channel, xmltv_id, custom_name, custom_image, xml_source)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(physical_channel) DO UPDATE SET
+            xmltv_id = excluded.xmltv_id,
+            custom_name = excluded.custom_name,
+            custom_image = excluded.custom_image,
+            xml_source = excluded.xml_source
+        """,
         (mapping.physical_channel, mapping.xmltv_id, mapping.custom_name, mapping.custom_image, mapping.xml_source)
     )
     await db.commit()

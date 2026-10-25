@@ -341,9 +341,18 @@
                         <img v-if="mapData.custom_logo" :src="mapData.custom_logo" class="channel-logo" />
                         <div style="flex-grow: 1;">
                             XMLTV-ID: <span style="color:#637184">{{ mapData.xmltv_id }}</span>
-                            <div v-if="mapData.custom_name" style="font-size: 0.8em;">Eigener Name: {{ mapData.custom_name }}</div>
                             <div v-if="mapData.custom_image" style="font-size: 0.8em;">Eigenes Bild aktiv</div>
                             <div v-if="mapData.xml_source" style="font-size: 0.8em;">Eigene Quelle: {{ mapData.xml_source }}</div>
+                            <label style="display:block; font-size: 0.8em; color:#637184; margin-top:8px;">Anzeigename</label>
+                            <input
+                                type="text"
+                                v-model="reverseMappings[mapData.physical].custom_name"
+                                :placeholder="xmlChannelById[mapData.xmltv_id] ? xmlChannelById[mapData.xmltv_id].name : mapData.xmltv_id"
+                                @keyup.enter="saveExistingMapping(mapData.physical)"
+                            />
+                            <button @click="saveExistingMapping(mapData.physical)" :disabled="mappingSaveBusy">
+                                {{ mappingSaveBusy ? 'Speichern …' : 'Änderungen speichern' }}
+                            </button>
                         </div>
                         <div class="mapping-input" style="margin-left: 10px;">
                             <label style="font-size: 0.8em; color:#637184">Senderlogo</label>
@@ -354,6 +363,9 @@
                     </li>
                 </ul>
                 <p v-if="!pagedMappings.length" class="empty-state">Keine Zuordnungen passen zu deiner Suche.</p>
+                <p v-if="mappingSaveMessage" :class="mappingSaveError ? 'inventory-error' : 'status-ok'">
+                    {{ mappingSaveMessage }}
+                </p>
             </div>
         </div>
         </section>
@@ -387,6 +399,9 @@
                 mappingSearch: '',
                 mappingPage: 0,
                 mappingPageSize: 40,
+                mappingSaveBusy: false,
+                mappingSaveMessage: '',
+                mappingSaveError: false,
                 activeTab: 'devices',
                 channelLists: [],
                 selectedListId: '',
@@ -806,9 +821,12 @@
                                 });
                         });
                 },
-                saveMapping(xmltv_id) {
+                async saveMapping(xmltv_id) {
                     const mapData = this.mappings[xmltv_id];
-                    if (!mapData || !mapData.physical) return;
+                    if (!mapData || !mapData.physical) {
+                        alert('Bitte zuerst eine Sendernummer eingeben.');
+                        return;
+                    }
                     
                     const payload = {
                         physical_channel: mapData.physical,
@@ -818,15 +836,49 @@
                         xml_source: mapData.xml_source || null
                     };
 
-                    fetch('/api/mappings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    }).then(res => res.json())
-                    .then(data => {
+                    try {
+                        const response = await fetch('/api/mappings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Zuordnung konnte nicht gespeichert werden.');
                         this.$set(this.mappings, xmltv_id, { physical: '', custom_name: '', custom_image: '', xml_source: '' });
-                        this.fetchData();
-                    });
+                        await this.fetchData();
+                        alert('Senderzuordnung gespeichert.');
+                    } catch (error) {
+                        alert('Speichern fehlgeschlagen: ' + (error.message || 'Unbekannter Fehler'));
+                    }
+                },
+                async saveExistingMapping(physical) {
+                    const mapping = this.reverseMappings[physical];
+                    if (!mapping) return;
+                    this.mappingSaveBusy = true;
+                    this.mappingSaveMessage = '';
+                    this.mappingSaveError = false;
+                    try {
+                        const response = await fetch('/api/mappings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                physical_channel: physical,
+                                xmltv_id: mapping.xmltv_id,
+                                custom_name: (mapping.custom_name || '').trim() || null,
+                                custom_image: mapping.custom_image || null,
+                                xml_source: mapping.xml_source || null
+                            })
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Sendername konnte nicht gespeichert werden.');
+                        this.mappingSaveMessage = 'Änderungen gespeichert.';
+                        await this.fetchData();
+                    } catch (error) {
+                        this.mappingSaveError = true;
+                        this.mappingSaveMessage = error.message || 'Sendername konnte nicht gespeichert werden.';
+                    } finally {
+                        this.mappingSaveBusy = false;
+                    }
                 },
                 deleteMapping(physical) {
                     if (!confirm("Die Zuordnung für Sender " + physical + " löschen? Der Sender bleibt auf dem Fernseher, verliert aber seine Programmdaten.")) return;

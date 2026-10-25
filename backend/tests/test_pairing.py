@@ -199,8 +199,48 @@ class PairingApiTests(unittest.TestCase):
         self.assertIn('v-for="channel in pagedXmlChannels"', page.text)
         self.assertIn('v-for="channel in filteredAvailableListChannels"', page.text)
         self.assertIn('v-for="mapData in pagedMappings"', page.text)
+        self.assertIn("saveExistingMapping(mapData.physical)", page.text)
+        self.assertIn("Anzeigename", page.text)
         self.assertNotIn('v-for="channel in xmlChannels"', page.text)
         self.assertEqual(self.client.get("/api/mappings").status_code, 200)
+
+    def test_saving_existing_mapping_updates_name_without_removing_logo(self):
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            db.execute(
+                """
+                INSERT INTO channel_mappings
+                    (physical_channel, xmltv_id, custom_name, custom_logo)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("7.1", "channel.one", "Old Name", "/static/logos/7_1.png"),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        response = self.client.post(
+            "/api/mappings",
+            headers=self.admin_headers(),
+            json={
+                "physical_channel": "7.1",
+                "xmltv_id": "channel.one",
+                "custom_name": "Updated Name",
+                "custom_image": None,
+                "xml_source": None,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            row = db.execute(
+                "SELECT custom_name, custom_logo FROM channel_mappings WHERE physical_channel = ?",
+                ("7.1",),
+            ).fetchone()
+        finally:
+            db.close()
+        self.assertEqual(row, ("Updated Name", "/static/logos/7_1.png"))
 
         logged_out = self.client.post("/api/v1/admin/logout")
         self.assertEqual(logged_out.status_code, 200)
