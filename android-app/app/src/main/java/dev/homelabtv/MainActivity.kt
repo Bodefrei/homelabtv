@@ -84,6 +84,8 @@ private const val READ_TV_LISTINGS_PERMISSION = "android.permission.READ_TV_LIST
 // detailed banner; later than this it just dismisses everything.
 private const val INFO_DOUBLE_PRESS_WINDOW_MS = 2000L
 
+private val GUIDE_KEYS = setOf(KeyEvent.KEYCODE_GUIDE, KeyEvent.KEYCODE_HELP)
+
 private val HANDLED_KEYS =
     setOf(
         KeyEvent.KEYCODE_DPAD_UP,
@@ -92,11 +94,10 @@ private val HANDLED_KEYS =
         KeyEvent.KEYCODE_CHANNEL_DOWN,
         KeyEvent.KEYCODE_DPAD_CENTER,
         KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_GUIDE,
         KeyEvent.KEYCODE_INFO,
         KeyEvent.KEYCODE_LAST_CHANNEL,
         KeyEvent.KEYCODE_DPAD_LEFT,
-    )
+    ) + GUIDE_KEYS
 
 private fun digitFor(keyCode: Int): Int? =
     when (keyCode) {
@@ -278,7 +279,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                         }
                         true
                     }
-                    KeyEvent.KEYCODE_GUIDE -> {
+                    in GUIDE_KEYS -> {
                         if (event.type == KeyEventType.KeyUp) {
                             numberEntry = ""
                             showDetails = false

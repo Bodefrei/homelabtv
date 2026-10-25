@@ -283,40 +283,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun refreshDeviceChannelList(credential: String) {
+        val api = RetrofitClient.getInstance(serverUrl)
+        val authorization = "Bearer $credential"
+        var listOptionsError: Exception? = null
         try {
-            val api = RetrofitClient.getInstance(serverUrl)
-            val authorization = "Bearer $credential"
-            val lists = api.getCurrentDeviceChannelLists(authorization)
-            serverChannelLists = lists
-            var listId = selectedServerChannelListId
-            if (listId != null && lists.none { it.id == listId }) {
-                listId = null
+            serverChannelLists = api.getCurrentDeviceChannelLists(authorization)
+        } catch (e: Exception) {
+            listOptionsError = e
+            serverChannelLists = emptyList()
+        }
+        try {
+            val selectedListId =
+                if (listOptionsError == null) {
+                    selectedServerChannelListId
+                        ?.takeIf { id -> serverChannelLists.any { it.id == id } }
+                        ?: serverChannelLists.firstOrNull { it.assigned }?.id
+                } else {
+                    null
+                }
+            if (selectedServerChannelListId != null && listOptionsError == null && selectedListId == null) {
                 selectedServerChannelListId = null
                 prefs.edit().remove("selected_server_channel_list_id").apply()
             }
-            if (listId == null && channelListMode == ChannelListMode.SERVER) {
-                listId = lists.firstOrNull { it.assigned }?.id
-            }
-            if (listId != null && lists.none { it.id == listId && it.assigned }) {
-                val selectedResponse = api.getCurrentDeviceChannelList(authorization, listId)
-                applyDeviceChannelList(selectedResponse)
-                return
-            }
-            val response =
-                RetrofitClient.getInstance(serverUrl)
-                    .getCurrentDeviceChannelList("Bearer $credential")
-            if (selectedServerChannelListId == null && response.list_id != null) {
+            val response = api.getCurrentDeviceChannelList(authorization, selectedListId)
+            if (listOptionsError != null) {
+                selectedServerChannelListId = response.list_id
+                val editor = prefs.edit()
+                if (response.list_id == null) {
+                    editor.remove("selected_server_channel_list_id")
+                } else {
+                    editor.putString("selected_server_channel_list_id", response.list_id)
+                }
+                editor.apply()
+            } else if (selectedServerChannelListId == null && response.list_id != null) {
                 selectedServerChannelListId = response.list_id
                 prefs.edit().putString("selected_server_channel_list_id", response.list_id).apply()
             }
-            applyDeviceChannelList(response)
+            applyDeviceChannelList(
+                response,
+                listOptionsError?.let {
+                    "Listen-Auswahl konnte nicht geladen werden: ${it.message ?: it.javaClass.simpleName}"
+                },
+            )
         } catch (e: Exception) {
             channelListStatus =
                 "Favoritenliste konnte nicht synchronisiert werden: ${e.message ?: e.javaClass.simpleName}"
         }
     }
 
-    private fun applyDeviceChannelList(response: DeviceChannelListResponse) {
+    private fun applyDeviceChannelList(response: DeviceChannelListResponse, warning: String? = null) {
         favoriteChannelIds =
             if (response.active) {
                 response.channels.mapNotNull { it.channel_id }.distinct()
@@ -334,7 +349,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 emptyMap()
             }
         applyFavoriteChannelOrder()
-        channelListStatus =
+        val status =
             if (channelListMode == ChannelListMode.TV) {
                 "TV-Kanalliste wird verwendet. Die Server-Favoritenliste ist verfügbar."
             } else if (response.active) {
@@ -342,6 +357,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 "Keine Serverliste verfügbar; die TV-Kanalliste bleibt aktiv."
             }
+        channelListStatus = listOfNotNull(status, warning).joinToString(" ")
     }
 
     private fun applyFavoriteChannelOrder() {
