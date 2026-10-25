@@ -46,7 +46,7 @@ class GuideRepository(context: Context) {
     companion object {
         private const val TAG = "GuideRepository"
         private const val MAX_LOGO_BYTES = 10L * 1024 * 1024
-        private val LOGO_EXTENSIONS = listOf(".jpg", ".png", ".webp", ".gif")
+        private val LOGO_EXTENSIONS = listOf(".jpg", ".png", ".webp", ".gif", ".svg")
     }
 
     private val _state = MutableStateFlow(GuideState())
@@ -140,6 +140,7 @@ class GuideRepository(context: Context) {
                         "png" -> ".png"
                         "webp" -> ".webp"
                         "gif" -> ".gif"
+                        "svg+xml", "svg" -> ".svg"
                         else -> {
                             Log.w(TAG, "Unsupported channel logo content type: ${body.contentType()}")
                             return null

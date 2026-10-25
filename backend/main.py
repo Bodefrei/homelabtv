@@ -156,6 +156,7 @@ IMAGE_EXT_BY_TYPE = {
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
+    "image/svg+xml": ".svg",
 }
 MAX_CACHED_IMAGE_BYTES = 10 * 1024 * 1024
 
@@ -1394,7 +1395,7 @@ async def _cache_xmltv_channel_logos(channels):
             return dict(channel)
         async with semaphore:
             local_path = await _cache_remote_image(icon_url)
-        return {**channel, "icon": local_path}
+        return {**channel, "icon": local_path or icon_url}
 
     return await asyncio.gather(*(cache_channel(channel) for channel in channels))
 

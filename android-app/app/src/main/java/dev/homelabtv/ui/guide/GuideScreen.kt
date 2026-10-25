@@ -162,6 +162,7 @@ fun GuideScreen(
         }
 
     var anchorTime by remember { mutableStateOf(now) }
+    var hasPreparedInitialRow by remember(channels, windowStart, initialRow) { mutableStateOf(false) }
     // Program is null when a "No listings" gap cell is focused
     var focusedCell by remember { mutableStateOf<Pair<ChannelGuide, Program?>?>(null) }
 
@@ -270,6 +271,7 @@ fun GuideScreen(
                             SideEffect {
                                 preparedSlots[rowIndex] = rowSlots
                                 rowRequesters[rowIndex] = rowRequestersForSlots
+                                if (rowIndex == initialRow) hasPreparedInitialRow = true
                             }
                             DisposableEffect(channels, rowIndex, windowStart) {
                                 onDispose {
@@ -307,7 +309,7 @@ fun GuideScreen(
             }
         }
       }
-      if (channels.isNotEmpty() && preparedSlots[initialRow] == null) {
+      if (channels.isNotEmpty() && !hasPreparedInitialRow) {
           Box(
               Modifier.fillMaxSize().background(AppBackground.copy(alpha = 0.94f)),
               contentAlignment = Alignment.Center,

@@ -670,6 +670,31 @@ class PairingApiTests(unittest.TestCase):
         cached_image = cache_dir / Path(first).name
         self.assertEqual(cached_image.read_bytes(), b"\x89PNG\r\n\x1a\nlogo")
 
+    def test_server_caches_svg_xmltv_logos(self):
+        cache_dir = Path(self.temp_dir.name) / "svg-images"
+
+        async def run():
+            async def handler(request):
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "image/svg+xml"},
+                    content=b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+                )
+
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            with (
+                patch.object(main, "IMAGE_CACHE_DIR", str(cache_dir)),
+                patch("main.httpx.AsyncClient", return_value=client),
+            ):
+                result = await main._cache_remote_image("https://logos.example/channel.svg")
+            await client.aclose()
+            return result
+
+        cached_path = asyncio.run(run())
+
+        self.assertTrue(cached_path.endswith(".svg"))
+        self.assertTrue((cache_dir / Path(cached_path).name).is_file())
+
     def test_xmltv_channel_endpoint_caches_parse_until_source_changes(self):
         source = Path(self.temp_dir.name) / "guide.xml"
         source.write_text("<tv/>", encoding="utf-8")
