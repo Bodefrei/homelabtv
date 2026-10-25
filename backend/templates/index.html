@@ -38,6 +38,29 @@
             </div>
         </div>
 
+        <div class="panel pairing-panel">
+            <h2>Pair an Android TV</h2>
+            <p style="color: #aaa;">Enter the six-digit code shown by HomelabTV on the TV. Pairing codes expire after five minutes.</p>
+            <form class="pairing-form" @submit.prevent="reviewPairing(true)">
+                <label for="pairing-code">TV pairing code</label>
+                <input
+                    id="pairing-code"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="6"
+                    pattern="[0-9]{6}"
+                    placeholder="123456"
+                    v-model="pairingCode"
+                    :disabled="pairingBusy"
+                    required
+                />
+                <button type="submit" :disabled="pairingBusy || pairingCode.length !== 6">Approve device</button>
+                <button type="button" class="danger" @click="reviewPairing(false)" :disabled="pairingBusy || pairingCode.length !== 6">Reject</button>
+            </form>
+            <p v-if="pairingMessage" role="status" :style="{ color: pairingError ? '#ff8a80' : '#9adcf0' }">{{ pairingMessage }}</p>
+        </div>
+
         <div class="grid">
             <div class="panel">
                 <h2>WebGrab+Plus Channels</h2>
@@ -114,7 +137,11 @@
                 xmlChannels: [],
                 mappings: {},        // form state per XMLTV id (what you're about to add)
                 mappingsByXml: {},   // existing mappings grouped by XMLTV id
-                reverseMappings: {}  // existing mappings keyed by physical channel
+                reverseMappings: {}, // existing mappings keyed by physical channel
+                pairingCode: '',
+                pairingBusy: false,
+                pairingError: false,
+                pairingMessage: ''
             },
             mounted() {
                 this.fetchData();
@@ -132,6 +159,36 @@
                 }
             },
             methods: {
+                async reviewPairing(approve) {
+                    if (!/^[0-9]{6}$/.test(this.pairingCode)) {
+                        this.pairingError = true;
+                        this.pairingMessage = 'Enter the six-digit code displayed on the TV.';
+                        return;
+                    }
+                    this.pairingBusy = true;
+                    this.pairingError = false;
+                    this.pairingMessage = '';
+                    try {
+                        const response = await fetch(approve ? '/api/v1/pairing/approve' : '/api/v1/pairing/reject', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_code: this.pairingCode })
+                        });
+                        const data = await response.json();
+                        if (!response.ok) {
+                            throw new Error(data.detail || 'The pairing request could not be processed.');
+                        }
+                        this.pairingMessage = approve
+                            ? 'Device approved. The TV will complete pairing automatically.'
+                            : 'Pairing request rejected.';
+                        this.pairingCode = '';
+                    } catch (error) {
+                        this.pairingError = true;
+                        this.pairingMessage = error.message || 'The pairing request could not be processed.';
+                    } finally {
+                        this.pairingBusy = false;
+                    }
+                },
                 fetchData() {
                     // Fetch channels first
                     fetch('/api/xmltv/channels')

@@ -2,6 +2,7 @@ package dev.homelabtv.ui
 
 import android.app.Application
 import android.content.Context
+import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -12,11 +13,18 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dev.homelabtv.data.ChannelGuide
 import dev.homelabtv.data.ChannelRepository
+import dev.homelabtv.data.DeviceChannelInventoryEntry
+import dev.homelabtv.data.DeviceChannelInventoryRequest
+import dev.homelabtv.data.DeviceCredentialStore
 import dev.homelabtv.data.GuideRepository
 import dev.homelabtv.data.GuideState
+import dev.homelabtv.data.PairingPollRequest
+import dev.homelabtv.data.PairingStartRequest
 import dev.homelabtv.data.PhysicalChannel
 import dev.homelabtv.data.Program
+import dev.homelabtv.data.RetrofitClient
 import dev.homelabtv.data.XmltvTime
+import dev.homelabtv.data.calculateDeviceChannelInventoryHash
 import dev.homelabtv.data.channelMajor
 import dev.homelabtv.data.channelMinor
 import dev.homelabtv.data.normalizeChannelNumber
@@ -24,6 +32,7 @@ import dev.homelabtv.data.numberPrefixComplete
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.net.URI
 
 data class Reminder(val channel: String, val title: String, val startMillis: Long)
 
@@ -41,6 +50,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("homelab_prefs", Context.MODE_PRIVATE)
     private val guideRepository = GuideRepository(app)
     private val channelRepository = ChannelRepository(app)
+    private val deviceCredentialStore = DeviceCredentialStore(app)
 
     val guideState: StateFlow<GuideState> = guideRepository.state
 
@@ -57,6 +67,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var quickThreshold by mutableIntStateOf(prefs.getInt("quick_threshold", 5).coerceIn(1, 8))
+        private set
+
+    var pairingCode by mutableStateOf<String?>(null)
+        private set
+
+    var pairingStatus by mutableStateOf("")
+        private set
+
+    var pairingInProgress by mutableStateOf(false)
+        private set
+
+    var devicePaired by mutableStateOf(false)
+        private set
+
+    var inventorySyncStatus by mutableStateOf("")
+        private set
+
+    var inventorySyncInProgress by mutableStateOf(false)
         private set
 
     fun cycleNumberEntryMode() {
@@ -133,6 +161,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = physicalChannels.getOrNull(currentChannelIndex)
 
     init {
+        try {
+            devicePaired = deviceCredentialStore.credential() != null
+        } catch (e: Exception) {
+            pairingStatus = "Gespeicherte Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
+        }
         physicalChannels = channelRepository.getPhysicalChannels()
         currentChannelIndex = restoreLastChannelIndex()
         viewModelScope.launch {
@@ -158,7 +191,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Re-query TvContract, e.g. after READ_TV_LISTINGS is granted or a channel rescan. */
-    fun reloadChannels() {
+    fun reloadChannels(forceInventoryUpload: Boolean = false) {
         val stayOn = currentChannel?.displayNumber
         physicalChannels = channelRepository.getPhysicalChannels()
         // Keep the viewer on the same channel number across a rescan when it still
@@ -166,7 +199,69 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         currentChannelIndex =
             stayOn?.let { indexOfChannelNumber(it) }
                 ?: restoreLastChannelIndex()
+        syncChannelInventory(forceUpload = forceInventoryUpload)
     }
+
+    fun syncChannelInventory(forceUpload: Boolean = false) {
+        if (inventorySyncInProgress || !devicePaired) return
+        val credential =
+            try {
+                deviceCredentialStore.credential()
+            } catch (e: Exception) {
+                inventorySyncStatus =
+                    "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
+                return
+            } ?: return
+        val channels = physicalChannels.map { it.toInventoryEntry() }
+        val inventoryHash = calculateDeviceChannelInventoryHash(channels)
+        inventorySyncInProgress = true
+        viewModelScope.launch {
+            try {
+                val baseUrl = validatedServerUrl(serverUrl)
+                val cacheKey = "inventory_hash:$baseUrl"
+                if (!forceUpload && prefs.getString(cacheKey, null) == inventoryHash) {
+                    inventorySyncStatus = "Kanalinventar ist aktuell."
+                    return@launch
+                }
+                val response =
+                    RetrofitClient.getInstance(baseUrl).syncDeviceChannels(
+                        authorization = "Bearer $credential",
+                        request = DeviceChannelInventoryRequest(inventoryHash, channels),
+                    )
+                check(response.inventory_hash == inventoryHash) {
+                    "Der Server hat das Kanalinventar nicht bestätigt."
+                }
+                check(prefs.edit().putString(cacheKey, inventoryHash).commit()) {
+                    "Der lokale Synchronisierungsstatus konnte nicht gespeichert werden."
+                }
+                inventorySyncStatus =
+                    "Kanalinventar synchronisiert: ${response.channel_count} Sender (Revision ${response.revision})."
+            } catch (e: Exception) {
+                inventorySyncStatus =
+                    "Kanalinventar-Synchronisierung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                inventorySyncInProgress = false
+                if (calculateDeviceChannelInventoryHash(physicalChannels.map { it.toInventoryEntry() }) != inventoryHash) {
+                    syncChannelInventory()
+                }
+            }
+        }
+    }
+
+    private fun PhysicalChannel.toInventoryEntry() =
+        DeviceChannelInventoryEntry(
+            channel_id = id,
+            input_id = inputId,
+            display_number = displayNumber,
+            display_name = displayName,
+            original_display_name = originalDisplayName,
+            service_type = serviceType,
+            channel_type = channelType,
+            network_id = networkId,
+            transport_stream_id = transportStreamId,
+            service_id = serviceId,
+            internal_provider_id = internalProviderId,
+        )
 
     private fun restoreLastChannelIndex(): Int {
         val saved = prefs.getString("last_channel", null) ?: return 0
@@ -183,6 +278,92 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun updateServerUrl(url: String) {
         serverUrl = url
         prefs.edit().putString("server_url", url).apply()
+    }
+
+    fun startDevicePairing() {
+        if (pairingInProgress) return
+        if (devicePaired) {
+            pairingStatus = "Dieses Gerät ist bereits gekoppelt."
+            return
+        }
+
+        pairingInProgress = true
+        pairingCode = null
+        pairingStatus = "Verbindung zum Server wird hergestellt …"
+        viewModelScope.launch {
+            try {
+                val baseUrl = validatedServerUrl(serverUrl)
+                val deviceId = deviceCredentialStore.deviceId()
+                val deviceSecret = deviceCredentialStore.deviceSecret()
+                val appInfo = getApplication<Application>().packageManager
+                    .getPackageInfo(getApplication<Application>().packageName, 0)
+                val request =
+                    PairingStartRequest(
+                        device_id = deviceId,
+                        device_secret = deviceSecret,
+                        friendly_name = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+                        app_version = appInfo.versionName ?: "unknown",
+                        android_version = Build.VERSION.RELEASE ?: "unknown",
+                        manufacturer = Build.MANUFACTURER,
+                        model = Build.MODEL,
+                    )
+                val api = dev.homelabtv.data.RetrofitClient.getInstance(baseUrl)
+                val pairing = api.startPairing(request)
+                pairingCode = pairing.user_code
+                pairingStatus = "Code im Webinterface eingeben und das Gerät freigeben."
+
+                val deadline = System.currentTimeMillis() + pairing.expires_in_seconds * 1000L
+                while (System.currentTimeMillis() < deadline) {
+                    delay(PAIRING_POLL_INTERVAL_MS)
+                    val result = api.pollPairing(
+                        deviceId,
+                        PairingPollRequest(device_secret = deviceSecret),
+                    )
+                    when (result.status) {
+                        "pending" -> Unit
+                        "approved" -> Unit
+                        "paired" -> {
+                            val credential = result.device_credential
+                                ?: error("Der Server hat kein neues Geräte-Credential geliefert.")
+                            deviceCredentialStore.saveCredential(credential)
+                            devicePaired = true
+                            pairingCode = null
+                            pairingStatus = "Gerät gekoppelt. Serveranmeldung wird überprüft …"
+                            val registeredDevice = api.getCurrentDevice("Bearer $credential")
+                            pairingStatus = "Gerät gekoppelt: ${registeredDevice.friendly_name}"
+                            syncChannelInventory(forceUpload = true)
+                            return@launch
+                        }
+                        "rejected" -> error("Die Kopplungsanfrage wurde abgelehnt.")
+                        "expired" -> error("Der Kopplungscode ist abgelaufen. Bitte erneut starten.")
+                        else -> error("Unbekannter Pairing-Status vom Server: ${result.status}")
+                    }
+                }
+                error("Der Kopplungscode ist abgelaufen. Bitte erneut starten.")
+            } catch (e: Exception) {
+                pairingCode = null
+                pairingStatus =
+                    if (devicePaired) {
+                        "Gerät gekoppelt, aber die Serverprüfung ist fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
+                    } else {
+                        "Kopplung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
+                    }
+            } finally {
+                pairingInProgress = false
+            }
+        }
+    }
+
+    private fun validatedServerUrl(value: String): String {
+        val url = value.trim()
+        val uri = URI(url)
+        require(uri.scheme.equals("http", ignoreCase = true) || uri.scheme.equals("https", ignoreCase = true)) {
+            "Server-URL muss mit http:// oder https:// beginnen."
+        }
+        require(!uri.host.isNullOrBlank() && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
+            "Server-URL enthält ungültige oder nicht unterstützte Bestandteile."
+        }
+        return if (url.endsWith("/")) url else "$url/"
     }
 
     // ----- channel selection (tracks the previous channel for jump-back) -----
@@ -314,6 +495,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val DEFAULT_SERVER_URL = ""
+        private const val PAIRING_POLL_INTERVAL_MS = 3_000L
         private const val REFRESH_INTERVAL_MS = 15L * 60 * 1000
         private const val STALE_REMINDER_MS = 5L * 60 * 1000
     }

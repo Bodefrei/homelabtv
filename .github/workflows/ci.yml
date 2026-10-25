@@ -29,3 +29,5 @@ jobs:
         run: pip install -r backend/requirements.txt
       - name: Compile check
         run: python -m compileall backend
+      - name: Backend API tests
+        run: python -m unittest discover -s backend/tests -v

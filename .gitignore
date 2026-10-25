@@ -10,7 +10,9 @@ android-app/local.properties
 
 # Backend
 backend/data/
+backend/.env
 backend/static/logos/
+backend/.venv/
 __pycache__/
 *.pyc
 *.db

@@ -62,6 +62,34 @@ class GuideModelsTest {
     }
 
     @Test
+    fun `inventory hash matches backend encoding and ignores input ordering`() {
+        val channel =
+            DeviceChannelInventoryEntry(
+                channel_id = 101,
+                input_id = "tuner/input",
+                display_number = "7.1",
+                display_name = "Éxample",
+                original_display_name = null,
+                service_type = "AUDIO_VIDEO",
+                channel_type = "TYPE_ATSC_T",
+                network_id = 4660,
+                transport_stream_id = 22136,
+                service_id = 101,
+                internal_provider_id = "service-101",
+            )
+        val anotherChannel = channel.copy(channel_id = 102, display_number = "7.2")
+
+        assertEquals(
+            "6b2da8c414ffe967357146676914941bc6f279c2fdee06679ab04716cbd54419",
+            calculateDeviceChannelInventoryHash(listOf(channel)),
+        )
+        assertEquals(
+            calculateDeviceChannelInventoryHash(listOf(channel, anotherChannel)),
+            calculateDeviceChannelInventoryHash(listOf(anotherChannel, channel)),
+        )
+    }
+
+    @Test
     fun `buildSlots fills gaps and clips to the window`() {
         val hour = 60 * 60 * 1000L
         val windowStart = 1784030400000L // 12:00Z

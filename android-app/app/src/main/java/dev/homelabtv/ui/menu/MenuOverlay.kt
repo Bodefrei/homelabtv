@@ -51,8 +51,16 @@ fun MenuOverlay(
     isOnline: Boolean,
     lastUpdatedMillis: Long?,
     serverUrl: String,
+    pairingCode: String?,
+    pairingStatus: String,
+    pairingInProgress: Boolean,
+    devicePaired: Boolean,
+    inventorySyncStatus: String,
+    inventorySyncInProgress: Boolean,
     tunerInfo: String,
     onServerUrlChange: (String) -> Unit,
+    onPairDevice: () -> Unit,
+    onSyncChannelInventory: () -> Unit,
     onResume: () -> Unit,
     onOpenGuide: () -> Unit,
     onRefresh: () -> Unit,
@@ -112,6 +120,44 @@ fun MenuOverlay(
                         ),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(8.dp))
+                MenuListItem(
+                    when {
+                        devicePaired -> "Device paired"
+                        pairingInProgress -> "Pairing in progress…"
+                        else -> "Pair this TV"
+                    },
+                    Icons.Default.Settings,
+                    onPairDevice,
+                )
+                if (pairingCode != null) {
+                    Text(
+                        "Enter this code in the HomelabTV web interface:",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                    )
+                    Text(
+                        pairingCode,
+                        color = JellyfinBlue,
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 6.sp,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+                if (pairingStatus.isNotBlank()) {
+                    Text(pairingStatus, color = TextSecondary, fontSize = 12.sp)
+                }
+                if (devicePaired) {
+                    MenuListItem(
+                        if (inventorySyncInProgress) "Syncing Channel Inventory…" else "Sync Channel Inventory",
+                        Icons.Default.Refresh,
+                        onSyncChannelInventory,
+                    )
+                    if (inventorySyncStatus.isNotBlank()) {
+                        Text(inventorySyncStatus, color = TextSecondary, fontSize = 12.sp)
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 Text("Tuner input", color = TextSecondary, fontSize = 12.sp)
                 Text(tunerInfo, color = TextPrimary, fontSize = 13.sp)

@@ -7,13 +7,12 @@ services:
       - "30060:30060"
     volumes:
       - .:/app
-      # Point this at the directory containing your XMLTV .xml files
-      # (e.g. where WebGrab+Plus or zap2xml writes its output)
       - ./data:/data
     environment:
-      - TZ=America/New_York
+      - TZ=Europe/Berlin
       - HOMELAB_DATA_DIR=/data
+      - HOMELAB_ADMIN_TOKEN=${HOMELAB_ADMIN_TOKEN:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
-    # Installing from requirements.txt at startup means new dependencies arrive
-    # with code updates through the volume mount - no image rebuild needed
-    command: sh -c "pip install --no-cache-dir -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 30060 --reload"
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             uvicorn main:app --host 0.0.0.0 --port 30060"

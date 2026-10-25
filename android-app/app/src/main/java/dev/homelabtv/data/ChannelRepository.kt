@@ -12,6 +12,13 @@ data class PhysicalChannel(
     val displayNumber: String,
     val inputId: String?,
     val uri: Uri,
+    val originalDisplayName: String? = null,
+    val serviceType: String? = null,
+    val channelType: String? = null,
+    val networkId: Long? = null,
+    val transportStreamId: Long? = null,
+    val serviceId: Long? = null,
+    val internalProviderId: String? = null,
 )
 
 class ChannelRepository(private val context: Context) {
@@ -25,7 +32,12 @@ class ChannelRepository(private val context: Context) {
                 TvContract.Channels.COLUMN_DISPLAY_NAME,
                 TvContract.Channels.COLUMN_DISPLAY_NUMBER,
                 TvContract.Channels.COLUMN_INPUT_ID,
+                TvContract.Channels.COLUMN_SERVICE_TYPE,
                 TvContract.Channels.COLUMN_TYPE,
+                TvContract.Channels.COLUMN_ORIGINAL_NETWORK_ID,
+                TvContract.Channels.COLUMN_TRANSPORT_STREAM_ID,
+                TvContract.Channels.COLUMN_SERVICE_ID,
+                TvContract.Channels.COLUMN_INTERNAL_PROVIDER_ID,
             )
         try {
             context.contentResolver
@@ -35,7 +47,12 @@ class ChannelRepository(private val context: Context) {
                     val nameIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_DISPLAY_NAME)
                     val numberIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_DISPLAY_NUMBER)
                     val inputIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_INPUT_ID)
+                    val serviceTypeIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_SERVICE_TYPE)
                     val typeIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_TYPE)
+                    val networkIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_ORIGINAL_NETWORK_ID)
+                    val transportStreamIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_TRANSPORT_STREAM_ID)
+                    val serviceIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_SERVICE_ID)
+                    val providerIndex = cursor.getColumnIndex(TvContract.Channels.COLUMN_INTERNAL_PROVIDER_ID)
                     while (cursor.moveToNext()) {
                         // Streaming apps register promo "preview"/"other" channels in the
                         // same table (e.g. Google's "Movies & TV" on 1-1); those aren't
@@ -56,6 +73,12 @@ class ChannelRepository(private val context: Context) {
                                 displayNumber = cursor.getString(numberIndex) ?: "0",
                                 inputId = inputId,
                                 uri = TvContract.buildChannelUri(id),
+                                serviceType = serviceTypeIndex.takeIf { it >= 0 }?.let(cursor::getString),
+                                channelType = type,
+                                networkId = networkIndex.takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong),
+                                transportStreamId = transportStreamIndex.takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong),
+                                serviceId = serviceIndex.takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong),
+                                internalProviderId = providerIndex.takeIf { it >= 0 }?.let(cursor::getString),
                             )
                         )
                     }

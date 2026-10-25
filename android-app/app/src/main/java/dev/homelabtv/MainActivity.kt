@@ -122,14 +122,14 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
     // so the tuner looks missing even when it's fine. Ask once on launch.
     val permissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) viewModel.reloadChannels()
+            if (granted) viewModel.reloadChannels(forceInventoryUpload = true)
         }
     LaunchedEffect(Unit) {
         val status = ContextCompat.checkSelfPermission(context, READ_TV_LISTINGS_PERMISSION)
         if (status != PackageManager.PERMISSION_GRANTED) {
             permissionLauncher.launch(READ_TV_LISTINGS_PERMISSION)
         } else {
-            viewModel.reloadChannels()
+            viewModel.reloadChannels(forceInventoryUpload = true)
         }
     }
 
@@ -437,11 +437,19 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     isOnline = guideState.isOnline,
                     lastUpdatedMillis = guideState.lastUpdatedMillis,
                     serverUrl = viewModel.serverUrl,
+                    pairingCode = viewModel.pairingCode,
+                    pairingStatus = viewModel.pairingStatus,
+                    pairingInProgress = viewModel.pairingInProgress,
+                    devicePaired = viewModel.devicePaired,
+                    inventorySyncStatus = viewModel.inventorySyncStatus,
+                    inventorySyncInProgress = viewModel.inventorySyncInProgress,
                     tunerInfo =
                         currentChannel?.let {
                             "${it.displayName} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"
                         } ?: "No tuner detected",
                     onServerUrlChange = viewModel::updateServerUrl,
+                    onPairDevice = viewModel::startDevicePairing,
+                    onSyncChannelInventory = { viewModel.syncChannelInventory(forceUpload = true) },
                     onResume = { overlay = Overlay.NONE },
                     onOpenGuide = { overlay = Overlay.GUIDE },
                     onRefresh = { viewModel.refreshNow() },

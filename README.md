@@ -71,13 +71,42 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 
 ### 1. Backend
 
+Create `backend/.env` with a private administrator token (the file is ignored by Git):
+
+```dotenv
+HOMELAB_ADMIN_TOKEN=paste-a-long-random-token-here
+TMDB_API_KEY=yourkey
+```
+
+Generate a token with Python:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Start the backend from the `backend` directory:
+
 ```bash
 cd backend
 # put your XMLTV files in ./data (or edit docker-compose.yml to mount your existing directory)
-TMDB_API_KEY=yourkey docker compose up -d
+docker compose up -d
 ```
 
-Open `http://<server>:30060` and map each XMLTV channel to its physical channel number (e.g. `7.1`). You can also upload channel logos and delete/override mappings there.
+Open `http://<server>:30060`. The browser will request HTTP Basic authentication; use username `admin` and the value of `HOMELAB_ADMIN_TOKEN` as the password. The admin APIs also accept that token as a Bearer credential. Keep it private and use HTTPS through a trusted reverse proxy when accessing the server over an untrusted network; plain HTTP is only suitable for a trusted local network.
+
+#### Pair an Android TV
+
+In the TV app, open **Menu → Settings**, enter the server URL, then choose **Pair this TV**. The app creates a persistent application-specific device ID and a strong device secret, displays a six-digit code, and polls for administrator approval. In the server web interface, enter the code under **Pair an Android TV** and approve or reject it. The app stores the resulting device credential encrypted with an Android Keystore-backed key.
+
+The versioned API used by this flow is:
+
+1. `POST /api/v1/devices/pair` starts pairing. The six-digit `user_code` expires after five minutes; the server stores only the device-secret hash.
+2. An administrator approves or rejects the code at `POST /api/v1/pairing/approve` or `POST /api/v1/pairing/reject`. These endpoints require the admin token as a Bearer credential and `{"user_code":"123456"}` as the JSON body.
+3. The TV polls `POST /api/v1/devices/{device_id}/poll` with its device secret. After approval, the server returns the device credential once.
+
+`GET /api/v1/devices/me` checks a device credential. Administrators can list devices at `GET /api/v1/devices` and revoke a credential with `POST /api/v1/devices/{device_id}/revoke`. Admin and pairing attempts are rate-limited. Enter the server URL manually in TV Settings; automatic server discovery is not implemented.
+
+After pairing, the TV uploads its physical `TvContract` channel inventory to `PUT /api/v1/devices/me/channels` using its device credential. The server verifies a deterministic SHA-256 hash, records changed inventories as revisions, and marks channels missing from a later scan as unavailable instead of deleting their history. The app syncs on startup, after reloading channels, after pairing, and on request from **Settings → Sync Channel Inventory**. Administrators can inspect current and previously scanned channels at `GET /api/v1/devices/{device_id}/channels`. Use HTTPS with a trusted certificate when possible; HTTP should only be used on a trusted local network.
 
 Example zap2xml companion container (6-hour refresh, 3 days of data):
 
