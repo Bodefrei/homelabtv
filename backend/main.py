@@ -157,6 +157,7 @@ IMAGE_EXT_BY_TYPE = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+MAX_CACHED_IMAGE_BYTES = 10 * 1024 * 1024
 
 @app.on_event("startup")
 async def startup():
@@ -198,6 +199,8 @@ async def _xmltv_refresh_loop():
                 past_hours=XMLTV_KEEP_PAST_HOURS,
                 future_hours=XMLTV_KEEP_FUTURE_HOURS,
             )
+            channels, _ = await _get_xmltv_data(xmltv_files())
+            await _cache_xmltv_channel_logos(channels)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1326,6 +1329,76 @@ def local_image_url(url, request):
     return url
 
 
+async def _cache_remote_image(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or _is_blocked_host(parsed.hostname):
+        logger.warning("Skipping unsupported XMLTV logo URL: %s", url)
+        return None
+
+    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    for ext in IMAGE_EXT_BY_TYPE.values():
+        cached = os.path.join(IMAGE_CACHE_DIR, key + ext)
+        if os.path.isfile(cached):
+            return f"/static/imgcache/{key}{ext}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                final_url = urllib.parse.urlparse(str(response.url))
+                if final_url.scheme not in ("http", "https") or _is_blocked_host(final_url.hostname):
+                    logger.warning("Skipping XMLTV logo redirect to unsupported host: %s", response.url)
+                    return None
+                content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                extension = IMAGE_EXT_BY_TYPE.get(content_type)
+                if not extension:
+                    logger.warning("XMLTV logo has unsupported content type %s: %s", content_type, url)
+                    return None
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > MAX_CACHED_IMAGE_BYTES:
+                    logger.warning("XMLTV logo exceeds the image cache size limit: %s", url)
+                    return None
+
+                cached = os.path.join(IMAGE_CACHE_DIR, key + extension)
+                temporary = os.path.join(IMAGE_CACHE_DIR, f"{key}.{uuid.uuid4().hex}.tmp")
+                total_bytes = 0
+                try:
+                    with open(temporary, "wb") as image_file:
+                        async for chunk in response.aiter_bytes():
+                            total_bytes += len(chunk)
+                            if total_bytes > MAX_CACHED_IMAGE_BYTES:
+                                logger.warning("XMLTV logo exceeds the image cache size limit: %s", url)
+                                return None
+                            image_file.write(chunk)
+                    if total_bytes == 0:
+                        logger.warning("XMLTV logo is empty: %s", url)
+                        return None
+                    os.replace(temporary, cached)
+                finally:
+                    if os.path.exists(temporary):
+                        os.remove(temporary)
+                logger.info("Cached XMLTV channel logo from %s", url)
+                return f"/static/imgcache/{key}{extension}"
+    except (httpx.HTTPError, OSError, ValueError):
+        logger.exception("Could not cache XMLTV channel logo from %s", url)
+        return None
+
+
+async def _cache_xmltv_channel_logos(channels):
+    semaphore = asyncio.Semaphore(8)
+
+    async def cache_channel(channel):
+        icon_url = channel.get("icon")
+        if not icon_url:
+            return dict(channel)
+        async with semaphore:
+            local_path = await _cache_remote_image(icon_url)
+        return {**channel, "icon": local_path}
+
+    return await asyncio.gather(*(cache_channel(channel) for channel in channels))
+
+
 def _program_media_type(program):
     categories = (category.casefold() for category in program.get("categories", []))
     return "movie" if any("film" in category or "movie" in category for category in categories) else "tv"
@@ -1457,11 +1530,17 @@ async def get_raw_xmltv(request: Request, file: str | None = None):
     raise HTTPException(status_code=404, detail=f"No XMLTV file named '{file}'")
 
 @app.get("/api/xmltv/channels")
-async def get_xmltv_channels():
-    """Returns cached XMLTV channels, reloading only when a source file changes."""
+async def get_xmltv_channels(request: Request):
+    """Returns XMLTV channels with logos cached and served from this server."""
     paths = xmltv_files()
     channels, _ = await _get_xmltv_data(paths)
-    return channels
+    channels_with_cached_logos = await _cache_xmltv_channel_logos(channels)
+    return [
+        {**channel, "icon": local_image_url(channel["icon"], request)}
+        if channel.get("icon")
+        else channel
+        for channel in channels_with_cached_logos
+    ]
 
 
 def _read_xmltv_data(paths):
@@ -1633,6 +1712,14 @@ async def get_enriched_guide(request: Request):
     # 2. Get cached XMLTV channels and programs; file changes invalidate both.
     xmltv_channel_records, all_programs = await _get_xmltv_data(xmltv_files())
     xmltv_channels = {channel["id"]: channel for channel in xmltv_channel_records}
+    mapped_xmltv_ids = {item["xmltv_id"] for item in mappings.values()}
+    mapped_channels = [
+        xmltv_channels[xmltv_id]
+        for xmltv_id in mapped_xmltv_ids
+        if xmltv_id in xmltv_channels
+    ]
+    cached_mapped_channels = await _cache_xmltv_channel_logos(mapped_channels)
+    xmltv_channels.update({channel["id"]: channel for channel in cached_mapped_channels})
 
     # The app displays a rolling 24-hour window; omit older and distant schedules.
     window_start = int(time.time() // (30 * 60) * (30 * 60))
@@ -1644,7 +1731,6 @@ async def get_enriched_guide(request: Request):
 
     # TMDB searches dominate cold-start latency. Reuse each title across mapped
     # channels and keep outbound concurrency bounded so a large guide won't flood TMDB.
-    mapped_xmltv_ids = {item["xmltv_id"] for item in mappings.values()}
     titles = {
         (program["title"], _program_media_type(program))
         for xmltv_id in mapped_xmltv_ids

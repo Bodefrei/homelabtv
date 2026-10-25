@@ -93,6 +93,15 @@ fun DetailsBanner(
             .padding(top = 24.dp, bottom = 56.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!guide?.logo_url.isNullOrBlank()) {
+                AsyncImage(
+                    model = guide.logo_url,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(width = 40.dp, height = 28.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             Text(
                 "${channel?.numberForDisplay ?: ""} · ${guide?.displayName ?: channel?.displayName ?: ""}",
                 color = JellyfinBlue,
