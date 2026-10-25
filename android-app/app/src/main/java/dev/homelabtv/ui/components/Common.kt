@@ -40,9 +40,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-fun formatClock(millis: Long): String = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(millis))
+fun formatClock(millis: Long): String = SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date(millis))
 
-fun formatDay(millis: Long): String = SimpleDateFormat("EEE MMM d", Locale.getDefault()).format(Date(millis))
+fun formatDay(millis: Long): String = SimpleDateFormat("EEE, d. MMM", Locale.GERMANY).format(Date(millis))
 
 fun ageText(sinceMillis: Long): String {
     val minutes = ((System.currentTimeMillis() - sinceMillis) / 60000L).coerceAtLeast(0)

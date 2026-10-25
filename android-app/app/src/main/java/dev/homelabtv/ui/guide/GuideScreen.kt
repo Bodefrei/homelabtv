@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,8 +30,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -70,17 +74,17 @@ import dev.homelabtv.theme.TextSecondary
 import dev.homelabtv.ui.components.FlagBadge
 import dev.homelabtv.ui.components.formatClock
 import dev.homelabtv.ui.components.formatDay
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val GUIDE_TAG = "HomelabGuide"
-private const val DP_PER_MINUTE = 4f
 private val CHANNEL_COL_WIDTH = 150.dp
-private val ROW_HEIGHT = 64.dp
+private val ROW_HEIGHT = 80.dp
 private const val HALF_HOUR_MS = 30L * 60 * 1000
-private const val GUIDE_WINDOW_MS = 24L * 60 * 60 * 1000
+private const val GUIDE_WINDOW_MS = 150L * 60 * 1000
+private const val GUIDE_WINDOW_MINUTES = 150f
 
 // The live-video mini player floats over this corner of the hero panel; the
 // actual TvView is positioned by MainActivity using these same values.
@@ -89,31 +93,27 @@ val GUIDE_MINI_PLAYER_HEIGHT = 180.dp
 val GUIDE_MINI_PLAYER_TOP = 20.dp
 val GUIDE_MINI_PLAYER_END = 48.dp
 
-private fun widthFor(startMillis: Long, stopMillis: Long): Dp =
-    (((stopMillis - startMillis) / 60000f) * DP_PER_MINUTE).dp
-
-private data class GridRow(
-    val channel: ChannelGuide,
-    val slots: List<GuideSlot>,
-    val requesters: List<FocusRequester>,
-)
-
-private data class PreparedGuideRow(val channel: ChannelGuide, val slots: List<GuideSlot>)
+private fun widthFor(startMillis: Long, stopMillis: Long, dpPerMinute: Float): Dp =
+    (((stopMillis - startMillis) / 60000f) * dpPerMinute).dp
 
 private object GuideSlotCache {
     private var cachedChannels: List<ChannelGuide>? = null
     private var cachedWindowStart: Long? = null
-    private var cachedRows: List<PreparedGuideRow> = emptyList()
+    private val cachedRows = LinkedHashMap<Int, List<GuideSlot>>(32, 0.75f, true)
 
     @Synchronized
-    fun get(channels: List<ChannelGuide>, windowStart: Long): List<PreparedGuideRow>? =
-        if (cachedChannels === channels && cachedWindowStart == windowStart) cachedRows else null
+    fun get(channels: List<ChannelGuide>, windowStart: Long, rowIndex: Int): List<GuideSlot>? =
+        if (cachedChannels === channels && cachedWindowStart == windowStart) cachedRows[rowIndex] else null
 
     @Synchronized
-    fun put(channels: List<ChannelGuide>, windowStart: Long, rows: List<PreparedGuideRow>) {
-        cachedChannels = channels
-        cachedWindowStart = windowStart
-        cachedRows = rows
+    fun put(channels: List<ChannelGuide>, windowStart: Long, rowIndex: Int, slots: List<GuideSlot>) {
+        if (cachedChannels !== channels || cachedWindowStart != windowStart) {
+            cachedChannels = channels
+            cachedWindowStart = windowStart
+            cachedRows.clear()
+        }
+        cachedRows[rowIndex] = slots
+        while (cachedRows.size > 32) cachedRows.remove(cachedRows.keys.first())
     }
 }
 
@@ -136,32 +136,19 @@ fun GuideScreen(
     onToggleReminder: (ChannelGuide, Program) -> Unit = { _, _ -> },
 ) {
     val now = remember { System.currentTimeMillis() }
-    val windowStart = remember(now) { now - now % HALF_HOUR_MS }
+    val windowStart = now
     val windowEnd = windowStart + GUIDE_WINDOW_MS
     val scrollState = rememberScrollState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    var preparedRows by remember(channels, windowStart) {
-        mutableStateOf(GuideSlotCache.get(channels, windowStart))
-    }
-    LaunchedEffect(channels, windowStart) {
-        if (preparedRows == null) {
-            val computedRows =
-                withContext(Dispatchers.Default) {
-                    channels.map { channel ->
-                        PreparedGuideRow(channel, buildSlots(channel.safePrograms, windowStart, windowEnd))
-                    }
-                }
-            GuideSlotCache.put(channels, windowStart, computedRows)
-            preparedRows = computedRows
-        }
-    }
-    val rows =
-        remember(preparedRows) {
-            preparedRows?.map { row ->
-                GridRow(row.channel, row.slots, row.slots.map { FocusRequester() })
-            } ?: emptyList()
+    val preparedSlots = remember(channels, windowStart) { mutableStateMapOf<Int, List<GuideSlot>>() }
+    val rowRequesters = remember(channels, windowStart) { mutableStateMapOf<Int, List<FocusRequester>>() }
+    val initialRow =
+        remember(channels, initialChannelNumber) {
+            val target = normalizeChannelNumber(initialChannelNumber)
+            if (target.isEmpty()) 0
+            else channels.indexOfFirst { normalizeChannelNumber(it.physical_channel) == target }.let { if (it >= 0) it else 0 }
         }
 
     var anchorTime by remember { mutableStateOf(now) }
@@ -169,78 +156,46 @@ fun GuideScreen(
     var focusedCell by remember { mutableStateOf<Pair<ChannelGuide, Program?>?>(null) }
 
     val focusRow: (Int) -> Unit = { rowIndex ->
-        if (rowIndex in rows.indices) {
-            val row = rows[rowIndex]
-            val slotIndex =
-                row.slots.indexOfFirst { anchorTime >= it.startMillis && anchorTime < it.stopMillis }
-                    .let { if (it >= 0) it else 0 }
+        if (rowIndex in channels.indices) {
             scope.launch {
-                repeat(4) { attempt ->
-                    try {
-                        row.requesters[slotIndex].requestFocus()
-                        Log.d(GUIDE_TAG, "focusRow($rowIndex) slot=$slotIndex ok on attempt $attempt")
-                        return@launch
-                    } catch (e: Exception) {
-                        Log.d(GUIDE_TAG, "focusRow($rowIndex) attempt $attempt failed: $e")
+                listState.scrollToItem(rowIndex)
+                repeat(20) { attempt ->
+                    val slots = preparedSlots[rowIndex]
+                    val requesters = rowRequesters[rowIndex]
+                    if (slots != null && requesters != null) {
+                        val slotIndex =
+                            slots.indexOfFirst { anchorTime >= it.startMillis && anchorTime < it.stopMillis }
+                                .let { if (it >= 0) it else 0 }
+                        try {
+                            requesters[slotIndex].requestFocus()
+                            Log.d(GUIDE_TAG, "focusRow($rowIndex) slot=$slotIndex ok on attempt $attempt")
+                            return@launch
+                        } catch (e: Exception) {
+                            Log.d(GUIDE_TAG, "focusRow($rowIndex) attempt $attempt failed: $e")
+                        }
                     }
-                    // Row not composed yet (edge of the lazy list) — scroll it in, retry
-                    try {
-                        listState.scrollToItem(rowIndex)
-                    } catch (e: Exception) {
-                        Log.d(GUIDE_TAG, "scrollToItem($rowIndex) failed: $e")
-                    }
-                    delay(80)
+                    delay(50)
                 }
-                // Never leave the guide with nothing focused — fall back to the top row
-                try {
-                    rows[0].requesters[0].requestFocus()
-                    Log.d(GUIDE_TAG, "focusRow($rowIndex) gave up; fell back to row 0")
-                } catch (e: Exception) {
-                    Log.d(GUIDE_TAG, "row-0 fallback also failed: $e")
-                }
+                Log.w(GUIDE_TAG, "focusRow($rowIndex) timed out waiting for lazy row")
             }
         }
     }
 
-    LaunchedEffect(rows.isNotEmpty()) {
-        if (rows.isNotEmpty()) {
-            // Open on the channel currently playing, not the top of the list
-            val target = normalizeChannelNumber(initialChannelNumber)
-            val startRow =
-                if (target.isEmpty()) 0
-                else
-                    rows.indexOfFirst { normalizeChannelNumber(it.channel.physical_channel) == target }
-                        .let { if (it >= 0) it else 0 }
-            Log.d(GUIDE_TAG, "open: initial=$initialChannelNumber target=$target startRow=$startRow rows=${rows.size}")
-            if (startRow > 0) {
-                try {
-                    listState.scrollToItem(startRow)
-                } catch (e: Exception) {
-                    Log.d(GUIDE_TAG, "initial scrollToItem($startRow) failed: $e")
-                }
-            }
-            delay(150)
-            focusRow(startRow)
+    LaunchedEffect(channels, initialRow, windowStart) {
+        if (channels.isNotEmpty()) {
+            listState.scrollToItem(initialRow)
+            focusRow(initialRow)
         }
     }
 
-    if (preparedRows == null) {
-        Box(
-            modifier.fillMaxSize().background(AppBackground),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = JellyfinBlue)
-                Spacer(Modifier.height(16.dp))
-                Text("EPG wird vorbereitet …", color = TextPrimary, fontSize = 16.sp)
-            }
-        }
-    } else Column(modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+      val dpPerMinute = ((maxWidth - CHANNEL_COL_WIDTH).value / GUIDE_WINDOW_MINUTES).coerceAtLeast(1f)
+      Column(Modifier.fillMaxSize()) {
         // Hero is transparent in the top-right corner so the underlying TvView
         // (positioned there by MainActivity) shows through as a mini player.
         HeroPanel(focusedCell)
         Column(Modifier.weight(1f).fillMaxWidth().background(AppBackground)) {
-            if (rows.isEmpty()) {
+            if (channels.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("No guide data yet", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
@@ -254,29 +209,76 @@ fun GuideScreen(
                     }
                 }
             } else {
-                TimeHeader(windowStart, windowEnd, now, scrollState)
+                TimeHeader(windowStart, windowEnd, now, scrollState, dpPerMinute)
                 LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-                    itemsIndexed(rows) { rowIndex, row ->
-                        GuideRow(
-                            row = row,
-                            windowStart = windowStart,
-                            now = now,
-                            scrollState = scrollState,
-                            onFocusCell = { slot ->
-                                if (anchorTime < slot.startMillis || anchorTime >= slot.stopMillis) {
-                                    anchorTime = maxOf(slot.startMillis, windowStart)
+                    itemsIndexed(
+                        items = channels,
+                        key = { index, channel -> channel.physical_channel ?: channel.xmltv_id ?: index.toString() },
+                    ) { rowIndex, channel ->
+                        var slots by remember(channels, rowIndex, windowStart) {
+                            mutableStateOf(GuideSlotCache.get(channels, windowStart, rowIndex))
+                        }
+                        LaunchedEffect(channels, rowIndex, windowStart) {
+                            if (slots == null) {
+                                val calculated = withContext(Dispatchers.Default) {
+                                    buildSlots(channel.safePrograms, windowStart, windowEnd)
                                 }
-                                focusedCell = row.channel to (slot as? GuideSlot.Show)?.program
-                            },
-                            onClickCell = { onTune(row.channel) },
-                            onLongClickShow = { program -> onToggleReminder(row.channel, program) },
-                            reminderKeys = reminderKeys,
-                            onMoveVertical = { direction -> focusRow(rowIndex + direction) },
-                        )
+                                GuideSlotCache.put(channels, windowStart, rowIndex, calculated)
+                                preparedSlots[rowIndex] = calculated
+                                slots = calculated
+                            } else {
+                                preparedSlots[rowIndex] = slots.orEmpty()
+                            }
+                        }
+                        if (slots == null) {
+                            Box(Modifier.fillMaxWidth().height(ROW_HEIGHT))
+                        } else {
+                            val requesters = remember(channels, rowIndex, slots!!.size) {
+                                slots!!.map { FocusRequester() }
+                            }
+                            SideEffect { rowRequesters[rowIndex] = requesters }
+                            DisposableEffect(channels, rowIndex, requesters) {
+                                onDispose {
+                                    if (rowRequesters[rowIndex] === requesters) rowRequesters.remove(rowIndex)
+                                }
+                            }
+                            GuideRow(
+                                channel = channel,
+                                slots = slots!!,
+                                requesters = requesters,
+                                windowStart = windowStart,
+                                now = now,
+                                scrollState = scrollState,
+                                dpPerMinute = dpPerMinute,
+                                onFocusCell = { slot ->
+                                    if (anchorTime < slot.startMillis || anchorTime >= slot.stopMillis) {
+                                        anchorTime = maxOf(slot.startMillis, windowStart)
+                                    }
+                                    focusedCell = channel to (slot as? GuideSlot.Show)?.program
+                                },
+                                onClickCell = { onTune(channel) },
+                                onLongClickShow = { program -> onToggleReminder(channel, program) },
+                                reminderKeys = reminderKeys,
+                                onMoveVertical = { direction -> focusRow(rowIndex + direction) },
+                            )
+                        }
                     }
                 }
             }
         }
+      }
+      if (channels.isNotEmpty() && preparedSlots[initialRow] == null) {
+          Box(
+              Modifier.fillMaxSize().background(AppBackground.copy(alpha = 0.94f)),
+              contentAlignment = Alignment.Center,
+          ) {
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  CircularProgressIndicator(color = JellyfinBlue)
+                  Spacer(Modifier.height(16.dp))
+                  Text("EPG wird vorbereitet …", color = TextPrimary, fontSize = 16.sp)
+              }
+          }
+      }
     }
 }
 
@@ -389,14 +391,20 @@ private fun HeroPanel(focused: Pair<ChannelGuide, Program?>?) {
 }
 
 @Composable
-private fun TimeHeader(windowStart: Long, windowEnd: Long, now: Long, scrollState: ScrollState) {
+private fun TimeHeader(
+    windowStart: Long,
+    windowEnd: Long,
+    now: Long,
+    scrollState: ScrollState,
+    dpPerMinute: Float,
+) {
     Row(Modifier.fillMaxWidth().height(26.dp)) {
         Box(Modifier.width(CHANNEL_COL_WIDTH))
         Box(Modifier.weight(1f).horizontalScroll(scrollState, enabled = false)) {
             Row {
                 var t = windowStart
                 while (t < windowEnd) {
-                    Box(Modifier.width(widthFor(t, t + HALF_HOUR_MS))) {
+                    Box(Modifier.width(widthFor(t, minOf(t + HALF_HOUR_MS, windowEnd), dpPerMinute))) {
                         Text(
                             formatClock(t),
                             color = TextSecondary,
@@ -407,15 +415,15 @@ private fun TimeHeader(windowStart: Long, windowEnd: Long, now: Long, scrollStat
                     t += HALF_HOUR_MS
                 }
             }
-            NowLine(windowStart, now)
+            NowLine(windowStart, now, dpPerMinute)
         }
     }
 }
 
 @Composable
-private fun NowLine(windowStart: Long, now: Long) {
+private fun NowLine(windowStart: Long, now: Long, dpPerMinute: Float) {
     Box(
-        Modifier.offset(x = widthFor(windowStart, now))
+        Modifier.offset(x = widthFor(windowStart, now, dpPerMinute))
             .width(2.dp)
             .fillMaxHeight()
             .background(JellyfinBlue.copy(alpha = 0.8f))
@@ -440,17 +448,19 @@ private fun Modifier.verticalGuideNav(onMoveVertical: (Int) -> Unit): Modifier =
 
 @Composable
 private fun GuideRow(
-    row: GridRow,
+    channel: ChannelGuide,
+    slots: List<GuideSlot>,
+    requesters: List<FocusRequester>,
     windowStart: Long,
     now: Long,
     scrollState: ScrollState,
+    dpPerMinute: Float,
     onFocusCell: (GuideSlot) -> Unit,
     onClickCell: () -> Unit,
     onLongClickShow: (Program) -> Unit,
     reminderKeys: Set<String>,
     onMoveVertical: (Int) -> Unit,
 ) {
-    val channel = row.channel
     Row(Modifier.fillMaxWidth().height(ROW_HEIGHT)) {
         Row(
             Modifier.width(CHANNEL_COL_WIDTH).fillMaxHeight().padding(horizontal = 10.dp),
@@ -482,32 +492,34 @@ private fun GuideRow(
         }
         Box(Modifier.weight(1f).horizontalScroll(scrollState)) {
             Row {
-                row.slots.forEachIndexed { index, slot ->
+                slots.forEachIndexed { index, slot ->
                     when (slot) {
                         is GuideSlot.Show ->
                             ProgramBlock(
                                 slot = slot,
                                 now = now,
-                                focusRequester = row.requesters[index],
+                                focusRequester = requesters[index],
                                 hasReminder =
                                     "${normalizeChannelNumber(channel.physical_channel)}|${XmltvTime.parse(slot.program.start)}" in reminderKeys,
                                 onFocus = { onFocusCell(slot) },
                                 onClick = onClickCell,
                                 onLongClick = { onLongClickShow(slot.program) },
                                 onMoveVertical = onMoveVertical,
+                                dpPerMinute = dpPerMinute,
                             )
                         is GuideSlot.Gap ->
                             GapBlock(
                                 slot = slot,
-                                focusRequester = row.requesters[index],
+                                focusRequester = requesters[index],
                                 onFocus = { onFocusCell(slot) },
                                 onClick = onClickCell,
                                 onMoveVertical = onMoveVertical,
+                                dpPerMinute = dpPerMinute,
                             )
                     }
                 }
             }
-            NowLine(windowStart, now)
+            NowLine(windowStart, now, dpPerMinute)
         }
     }
 }
@@ -522,6 +534,7 @@ private fun ProgramBlock(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onMoveVertical: (Int) -> Unit,
+    dpPerMinute: Float,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -529,7 +542,7 @@ private fun ProgramBlock(
     val isPast = slot.stopMillis <= now
     val isFuture = slot.startMillis > now
     Box(
-        Modifier.width(widthFor(slot.startMillis, slot.stopMillis))
+        Modifier.width(widthFor(slot.startMillis, slot.stopMillis, dpPerMinute))
             .fillMaxHeight()
             .padding(2.dp)
             .focusRequester(focusRequester)
@@ -574,16 +587,16 @@ private fun ProgramBlock(
                         isPast -> TextSecondary
                         else -> TextPrimary
                     },
-                fontSize = 13.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             val flagSuffix = slot.program.flag?.let { " · $it" } ?: ""
             Text(
                 "${formatClock(slot.startMillis)} – ${formatClock(slot.stopMillis)}$flagSuffix",
                 color = if (focused) Color(0xB3000000) else TextSecondary,
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 maxLines = 1,
             )
         }
@@ -597,13 +610,14 @@ private fun GapBlock(
     onFocus: () -> Unit,
     onClick: () -> Unit,
     onMoveVertical: (Int) -> Unit,
+    dpPerMinute: Float,
 ) {
     // Focusable like a program cell — otherwise a channel with no listings
     // becomes a dead zone the D-pad can't move through.
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     Box(
-        Modifier.width(widthFor(slot.startMillis, slot.stopMillis))
+        Modifier.width(widthFor(slot.startMillis, slot.stopMillis, dpPerMinute))
             .fillMaxHeight()
             .padding(2.dp)
             .focusRequester(focusRequester)
