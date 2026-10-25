@@ -75,6 +75,7 @@ Create `backend/.env` with a private administrator token (the file is ignored by
 
 ```dotenv
 HOMELAB_ADMIN_TOKEN=paste-a-long-random-token-here
+HOMELAB_ADMIN_AUTH_FAILURE_LIMIT=10
 TMDB_API_KEY=yourkey
 ```
 
@@ -93,6 +94,8 @@ docker compose up -d
 ```
 
 Open `http://<server>:30060`. The browser will request HTTP Basic authentication; use username `admin` and the value of `HOMELAB_ADMIN_TOKEN` as the password. The admin APIs also accept that token as a Bearer credential. Keep it private and use HTTPS through a trusted reverse proxy when accessing the server over an untrusted network; plain HTTP is only suitable for a trusted local network.
+
+`HOMELAB_ADMIN_AUTH_FAILURE_LIMIT` controls failed administrator logins per client within five minutes. It defaults to `10`; set it to another non-negative integer to change the limit, or `0` to disable this lockout. Disabling it removes a protection against password guessing, so use it only on a trusted network. Restart/recreate the backend container after changing `.env`.
 
 #### Pair an Android TV
 

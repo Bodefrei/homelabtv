@@ -382,6 +382,37 @@ class PairingApiTests(unittest.TestCase):
         self.assertEqual(statuses[:main.ADMIN_AUTH_FAILURE_LIMIT], [401] * main.ADMIN_AUTH_FAILURE_LIMIT)
         self.assertEqual(statuses[-1], 429)
 
+    def test_admin_authentication_failure_limit_is_configurable(self):
+        with patch.object(main, "ADMIN_AUTH_FAILURE_LIMIT", 2):
+            statuses = [
+                self.client.get(
+                    "/api/v1/devices",
+                    headers={"Authorization": "******"},
+                ).status_code
+                for _ in range(3)
+            ]
+        self.assertEqual(statuses, [401, 401, 429])
+
+    def test_admin_authentication_lockout_can_be_disabled(self):
+        with patch.object(main, "ADMIN_AUTH_FAILURE_LIMIT", 0):
+            statuses = [
+                self.client.get(
+                    "/api/v1/devices",
+                    headers={"Authorization": "******"},
+                ).status_code
+                for _ in range(12)
+            ]
+        self.assertEqual(statuses, [401] * 12)
+
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            attempts = db.execute(
+                "SELECT COUNT(*) FROM pairing_rate_limits WHERE rate_key LIKE 'admin-auth:%'"
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertEqual(attempts, 0)
+
     def test_legacy_database_migration_preserves_existing_mapping(self):
         legacy_db_path = Path(self.temp_dir.name) / "legacy.db"
         legacy_db = sqlite3.connect(legacy_db_path)

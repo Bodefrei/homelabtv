@@ -26,7 +26,12 @@ app = FastAPI(title="HomelabTV Backend")
 PAIRING_LIFETIME_SECONDS = 5 * 60
 PAIRING_REQUEST_LIMIT = 5
 PAIRING_APPROVAL_LIMIT = 10
-ADMIN_AUTH_FAILURE_LIMIT = 10
+try:
+    ADMIN_AUTH_FAILURE_LIMIT = int(os.environ.get("HOMELAB_ADMIN_AUTH_FAILURE_LIMIT", "10"))
+except ValueError as exc:
+    raise RuntimeError("HOMELAB_ADMIN_AUTH_FAILURE_LIMIT must be a non-negative integer") from exc
+if ADMIN_AUTH_FAILURE_LIMIT < 0:
+    raise RuntimeError("HOMELAB_ADMIN_AUTH_FAILURE_LIMIT must be a non-negative integer")
 RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 
 
@@ -172,13 +177,14 @@ async def require_admin(request: Request):
             candidate = ""
 
     if not candidate or not secrets.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8")):
-        db = await get_db_connection()
-        await _enforce_rate_limit(
-            db,
-            f"admin-auth:{_client_address(request)}",
-            ADMIN_AUTH_FAILURE_LIMIT,
-        )
-        await db.close()
+        if ADMIN_AUTH_FAILURE_LIMIT > 0:
+            db = await get_db_connection()
+            await _enforce_rate_limit(
+                db,
+                f"admin-auth:{_client_address(request)}",
+                ADMIN_AUTH_FAILURE_LIMIT,
+            )
+            await db.close()
         raise HTTPException(
             status_code=401,
             detail="Administrator authentication required",

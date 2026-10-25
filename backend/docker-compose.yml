@@ -12,6 +12,7 @@ services:
       - TZ=Europe/Berlin
       - HOMELAB_DATA_DIR=/data
       - HOMELAB_ADMIN_TOKEN=${HOMELAB_ADMIN_TOKEN:-}
+      - HOMELAB_ADMIN_AUTH_FAILURE_LIMIT=${HOMELAB_ADMIN_AUTH_FAILURE_LIMIT:-10}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
