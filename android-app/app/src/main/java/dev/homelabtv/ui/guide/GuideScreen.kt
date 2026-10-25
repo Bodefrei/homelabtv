@@ -83,15 +83,16 @@ private const val GUIDE_TAG = "HomelabGuide"
 private val CHANNEL_COL_WIDTH = 150.dp
 private val ROW_HEIGHT = 80.dp
 private const val HALF_HOUR_MS = 30L * 60 * 1000
-private const val GUIDE_WINDOW_MS = 150L * 60 * 1000
-private const val GUIDE_WINDOW_MINUTES = 150f
+private const val QUARTER_HOUR_MS = 15L * 60 * 1000
+private const val GUIDE_WINDOW_MS = 24L * 60 * 60 * 1000
+private const val GUIDE_VIEWPORT_MINUTES = 165f
 
 // The live-video mini player floats over this corner of the hero panel; the
 // actual TvView is positioned by MainActivity using these same values.
 val GUIDE_MINI_PLAYER_WIDTH = 320.dp
 val GUIDE_MINI_PLAYER_HEIGHT = 180.dp
 val GUIDE_MINI_PLAYER_TOP = 20.dp
-val GUIDE_MINI_PLAYER_END = 48.dp
+val GUIDE_MINI_PLAYER_END = 0.dp
 
 private fun widthFor(startMillis: Long, stopMillis: Long, dpPerMinute: Float): Dp =
     (((stopMillis - startMillis) / 60000f) * dpPerMinute).dp
@@ -136,7 +137,10 @@ fun GuideScreen(
     onToggleReminder: (ChannelGuide, Program) -> Unit = { _, _ -> },
 ) {
     val now = remember { System.currentTimeMillis() }
-    val windowStart = now
+    val windowStart = remember(now) {
+        val minimumStart = now - QUARTER_HOUR_MS
+        minimumStart - minimumStart % QUARTER_HOUR_MS
+    }
     val windowEnd = windowStart + GUIDE_WINDOW_MS
     val scrollState = rememberScrollState()
     val listState = rememberLazyListState()
@@ -189,7 +193,7 @@ fun GuideScreen(
     }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
-      val dpPerMinute = ((maxWidth - CHANNEL_COL_WIDTH).value / GUIDE_WINDOW_MINUTES).coerceAtLeast(1f)
+      val dpPerMinute = ((maxWidth - CHANNEL_COL_WIDTH).value / GUIDE_VIEWPORT_MINUTES).coerceAtLeast(1f)
       Column(Modifier.fillMaxSize()) {
         // Hero is transparent in the top-right corner so the underlying TvView
         // (positioned there by MainActivity) shows through as a mini player.
@@ -318,7 +322,7 @@ private fun HeroPanel(focused: Pair<ChannelGuide, Program?>?) {
             }
         }
         Column(
-            Modifier.align(Alignment.CenterStart).padding(start = 40.dp).fillMaxWidth(0.52f)
+            Modifier.align(Alignment.CenterStart).padding(start = 40.dp).fillMaxWidth(0.62f)
         ) {
             if (focused != null) {
                 val (channel, program) = focused
@@ -334,7 +338,7 @@ private fun HeroPanel(focused: Pair<ChannelGuide, Program?>?) {
                     color = if (program != null) TextPrimary else TextSecondary,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val episodeLine = program?.episodeLine() ?: ""
@@ -370,9 +374,9 @@ private fun HeroPanel(focused: Pair<ChannelGuide, Program?>?) {
                     Text(
                         program?.description ?: "",
                         color = TextSecondary,
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         lineHeight = 18.sp,
-                        maxLines = 3,
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -398,24 +402,39 @@ private fun TimeHeader(
     scrollState: ScrollState,
     dpPerMinute: Float,
 ) {
-    Row(Modifier.fillMaxWidth().height(26.dp)) {
+    Row(Modifier.fillMaxWidth().height(38.dp)) {
         Box(Modifier.width(CHANNEL_COL_WIDTH))
         Box(Modifier.weight(1f).horizontalScroll(scrollState, enabled = false)) {
-            Row {
-                var t = windowStart
+            Box(Modifier.width(widthFor(windowStart, windowEnd, dpPerMinute)).fillMaxHeight()) {
+                var t = (windowStart / HALF_HOUR_MS + 1) * HALF_HOUR_MS
                 while (t < windowEnd) {
-                    Box(Modifier.width(widthFor(t, minOf(t + HALF_HOUR_MS, windowEnd), dpPerMinute))) {
+                    val position = widthFor(windowStart, t, dpPerMinute)
+                    if (formatClock(t) == "00:00") {
+                        Column(Modifier.offset(x = position).padding(start = 4.dp)) {
+                            Text(
+                                formatClock(t),
+                                color = TextSecondary,
+                                fontSize = 11.sp,
+                            )
+                            Text(
+                                formatDay(t),
+                                color = TextSecondary,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                            )
+                        }
+                    } else {
                         Text(
                             formatClock(t),
                             color = TextSecondary,
                             fontSize = 11.sp,
-                            modifier = Modifier.padding(start = 4.dp),
+                            modifier = Modifier.offset(x = position).padding(start = 4.dp),
                         )
                     }
                     t += HALF_HOUR_MS
                 }
+                NowLine(windowStart, now, dpPerMinute)
             }
-            NowLine(windowStart, now, dpPerMinute)
         }
     }
 }
