@@ -1,4 +1,5 @@
 import os
+import asyncio
 import hashlib
 import hmac
 import base64
@@ -9,6 +10,7 @@ import struct
 import time
 import urllib.parse
 import uuid
+from starlette.concurrency import run_in_threadpool
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +38,9 @@ if ADMIN_AUTH_FAILURE_LIMIT < 0:
 RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 ADMIN_SESSION_COOKIE = "homelab_admin_session"
 ADMIN_SESSION_LIFETIME_SECONDS = 12 * 60 * 60
+_xmltv_channels_cache_signature = None
+_xmltv_channels_cache = []
+_xmltv_channels_cache_lock = asyncio.Lock()
 
 
 class AdminLoginRequest(BaseModel):
@@ -1350,14 +1355,27 @@ async def get_raw_xmltv(request: Request, file: str | None = None):
 
 @app.get("/api/xmltv/channels")
 async def get_xmltv_channels():
-    """Reads every XMLTV file in the data directory and returns the available channels."""
-    channels = []
-    for path in xmltv_files():
-        channels.extend(parse_xmltv(path))
+    """Returns cached XMLTV channels, reloading only when a source file changes."""
+    global _xmltv_channels_cache_signature, _xmltv_channels_cache
+    paths = xmltv_files()
+    signature_items = []
+    for path in paths:
+        stat = os.stat(path)
+        signature_items.append((path, stat.st_mtime_ns, stat.st_size))
+    signature = tuple(signature_items)
+    async with _xmltv_channels_cache_lock:
+        if signature != _xmltv_channels_cache_signature:
+            channels = await run_in_threadpool(_read_xmltv_channels, paths)
+            _xmltv_channels_cache = channels
+            _xmltv_channels_cache_signature = signature
+    return _xmltv_channels_cache
 
-    # Deduplicate
-    unique_channels = {c["id"]: c for c in channels}
-    return list(unique_channels.values())
+
+def _read_xmltv_channels(paths):
+    channels = []
+    for path in paths:
+        channels.extend(parse_xmltv(path))
+    return list({channel["id"]: channel for channel in channels}.values())
 
 class MappingRequest(BaseModel):
     physical_channel: str

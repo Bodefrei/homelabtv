@@ -191,6 +191,11 @@ class PairingApiTests(unittest.TestCase):
         self.assertIn("XMLTV &amp; Sender", page.text)
         self.assertIn("Gemeinsame Favoritenlisten", page.text)
         self.assertIn("Fernseher und Senderzuordnung", page.text)
+        self.assertIn('v-for="channel in pagedInventoryChannels"', page.text)
+        self.assertIn('v-for="channel in pagedXmlChannels"', page.text)
+        self.assertIn('v-for="channel in filteredAvailableListChannels"', page.text)
+        self.assertIn('v-for="mapData in pagedMappings"', page.text)
+        self.assertNotIn('v-for="channel in xmlChannels"', page.text)
         self.assertEqual(self.client.get("/api/mappings").status_code, 200)
 
         logged_out = self.client.post("/api/v1/admin/logout")
@@ -485,6 +490,26 @@ class PairingApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["xmltv_id"], "device-news.xml")
+
+    def test_xmltv_channel_endpoint_caches_parse_until_source_changes(self):
+        source = Path(self.temp_dir.name) / "guide.xml"
+        source.write_text("<tv/>", encoding="utf-8")
+        channels = [{"id": "one.xml", "name": "Channel One", "source_file": "guide.xml"}]
+        main._xmltv_channels_cache_signature = None
+        main._xmltv_channels_cache = []
+
+        with (
+            patch("main.xmltv_files", return_value=[str(source)]),
+            patch("main.parse_xmltv", return_value=channels) as parse_xmltv,
+        ):
+            first = self.client.get("/api/xmltv/channels")
+            second = self.client.get("/api/xmltv/channels")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), channels)
+        self.assertEqual(second.json(), channels)
+        parse_xmltv.assert_called_once_with(str(source))
 
     def test_channel_inventory_rejects_wrong_hash_and_duplicate_ids(self):
         _, credential = self.paired_device()

@@ -9,16 +9,16 @@
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a1a1a; color: #fff; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
         .header h1 { margin: 0; color: #00a4dc; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 20px; }
         .panel { background: #222; border-radius: 8px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .channel-list { list-style: none; padding: 0; max-height: 500px; overflow-y: auto; }
-        .channel-item { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #333; }
+        .channel-item { display: grid; grid-template-columns: 48px minmax(0, 1fr) minmax(240px, .8fr); align-items: center; gap: 12px; padding: 12px; border-bottom: 1px solid #333; }
         .channel-item:hover { background: #333; }
-        .channel-logo { width: 40px; height: 40px; margin-right: 15px; background: #000; border-radius: 4px; object-fit: contain; }
-        .channel-info { flex-grow: 1; }
+        .channel-logo { width: 40px; height: 40px; background: #000; border-radius: 4px; object-fit: contain; }
+        .channel-info { min-width: 0; overflow-wrap: anywhere; }
         .channel-id { font-size: 0.8em; color: #888; }
-        .mapping-input { display: flex; flex-direction: column; }
-        input[type="text"] { background: #111; border: 1px solid #444; color: #fff; padding: 8px; border-radius: 4px; margin-top: 5px; }
+        .mapping-input { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+        input[type="text"] { box-sizing: border-box; width: 100%; min-width: 0; background: #111; border: 1px solid #444; color: #fff; padding: 8px; border-radius: 4px; margin-top: 5px; }
         button { background: #00a4dc; color: #fff; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-top: 10px; }
         button:hover { background: #0082b3; }
         button.danger { background: #c62828; }
@@ -28,7 +28,9 @@
         .chip a { color: #ff8a80; text-decoration: none; margin-left: 6px; font-weight: bold; }
         .inventory-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
         .inventory-controls select { min-width: min(100%, 320px); padding: 9px; border: 1px solid #444; border-radius: 4px; background: #111; color: #fff; }
-        .inventory-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        .inventory-table { width: 100%; min-width: 720px; border-collapse: collapse; margin-top: 16px; }
+        .inventory-scroll { width: 100%; overflow-x: auto; }
+        .mapping-channel-input { width: 100%; min-width: 160px !important; }
         .inventory-table th, .inventory-table td { padding: 10px 8px; border-bottom: 1px solid #383838; text-align: left; }
         .inventory-table th { color: #aaa; font-size: .85em; }
         .inventory-table tr.unavailable { color: #888; }
@@ -46,6 +48,20 @@
         button:hover { background: #0d668f; }
         .badge { background: #e8eef4; color: #526173; }
         .inventory-controls, .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .page-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0; }
+        .page-controls button { margin: 0; }
+        .page-controls input { flex: 1 1 260px; }
+        .xmltv-channel-list { max-height: min(68vh, 760px); overflow-y: auto; padding: 0; }
+        .xmltv-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 12px; }
+        .xmltv-toolbar label { display: block; }
+        .xmltv-toolbar input { display: block; }
+        .inventory-filter { box-sizing: border-box; width: min(100%, 420px); min-width: 0; padding: 9px; border: 1px solid #cbd5df; border-radius: 5px; background: #fff; color: #253044; }
+        .channel-pagination-status { color: #637184; }
+        .channel-search-results { display: grid; gap: 4px; max-height: 220px; overflow-y: auto; }
+        .channel-search-result { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; margin: 0; padding: 8px 10px; background: #f3f7fa; color: #253044; text-align: left; }
+        .channel-search-result:hover { background: #e4f1f8; }
+        .channel-search-result span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .channel-search-result small { flex: 0 0 auto; color: #637184; }
         .tabs { display: flex; gap: 8px; margin: 20px 0; border-bottom: 1px solid #dce3eb; }
         .tabs button { margin: 0 0 -1px; padding: 12px 20px; background: transparent; border-radius: 8px 8px 0 0; color: #5b6879; border-bottom: 3px solid transparent; }
         .tabs button.active { color: #126b9a; background: #e8f4fa; border-bottom-color: #137eae; font-weight: 700; }
@@ -68,7 +84,18 @@
         .empty-state { padding: 22px; text-align: center; color: #718096; background: #f7f9fb; border-radius: 8px; }
         .status-ok { color: #18794e; }
         .status-warn { color: #9b5c00; }
-        @media (max-width: 760px) { .list-layout { grid-template-columns: 1fr; } .header { align-items: flex-start; gap: 10px; flex-direction: column; } }
+        @media (max-width: 900px) {
+            .list-layout { grid-template-columns: minmax(0, 1fr); }
+            .channel-item { grid-template-columns: 48px minmax(0, 1fr); }
+            .channel-item .mapping-input { grid-column: 2; }
+            .channel-item .mapping-input[style] { margin-left: 0 !important; }
+        }
+        @media (max-width: 760px) {
+            body { padding: 16px; }
+            .header { align-items: flex-start; gap: 10px; flex-direction: column; }
+            .xmltv-toolbar { grid-template-columns: minmax(0, 1fr); }
+            .page-controls { align-items: stretch; }
+        }
     </style>
 </head>
 <body>
@@ -140,29 +167,34 @@
             <p v-else-if="selectedDeviceId && inventoryChannels.length === 0 && !inventoryLoading" style="color: #888;">
                 Für diesen Fernseher wurde noch kein Senderinventar synchronisiert.
             </p>
-            <div v-if="inventoryChannels.length" style="overflow-x: auto;">
+            <div v-if="inventoryChannels.length" class="page-controls">
+                <input class="inventory-filter" type="search" v-model="inventorySearch" @input="inventoryPage = 0" placeholder="TV-Sender filtern (Name, Nummer, ID)" aria-label="TV-Sender filtern">
+                <span class="channel-pagination-status">{{ filteredInventoryChannels.length }} / {{ inventoryChannels.length }} Sender · Seite {{ inventoryPage + 1 }} / {{ inventoryPageCount }}</span>
+                <button @click="inventoryPage--" :disabled="inventoryPage === 0">Zurück</button>
+                <button @click="inventoryPage++" :disabled="inventoryPage + 1 >= inventoryPageCount">Weiter</button>
+            </div>
+            <datalist id="xmltv-channel-options">
+                <option v-for="xmlChannel in xmlChannels" :key="xmlChannel.id" :value="xmlChannel.id" :label="xmlChannel.name"></option>
+            </datalist>
+            <div v-if="pagedInventoryChannels.length" class="inventory-scroll">
                 <table class="inventory-table">
                     <thead>
                         <tr><th>TV-Nummer</th><th>TV-Sender</th><th>TV-ID</th><th>XMLTV-Sender zuordnen</th><th>Status</th></tr>
                     </thead>
                     <tbody>
-                        <tr v-for="channel in inventoryChannels" :key="channel.channel_id" :class="{ unavailable: !channel.available }">
+                        <tr v-for="channel in pagedInventoryChannels" :key="channel.channel_id" :class="{ unavailable: !channel.available }">
                             <td>{{ channel.display_number }}</td>
                             <td>{{ channel.display_name }}</td>
                             <td>{{ channel.channel_id }}</td>
                             <td>
-                                <select :value="channel.xmltv_id || ''" @change="saveDeviceMapping(channel, $event.target.value)" :disabled="!channel.available">
-                                    <option value="">Keine Zuordnung</option>
-                                    <option v-for="xmlChannel in xmlChannels" :key="xmlChannel.id" :value="xmlChannel.id">
-                                        {{ xmlChannel.name }} ({{ xmlChannel.id }})
-                                    </option>
-                                </select>
+                                <input class="mapping-channel-input" type="text" list="xmltv-channel-options" :value="channel.xmltv_id || ''" @change="saveDeviceMapping(channel, $event.target.value)" :disabled="!channel.available" placeholder="XMLTV-ID suchen oder eingeben">
                             </td>
                             <td :class="channel.available ? 'status-ok' : 'status-warn'">{{ channel.available ? 'Verfügbar' : 'Nicht mehr empfangen' }}</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
+            <p v-else-if="inventoryChannels.length && !inventoryLoading" class="empty-state">Keine TV-Sender passen zu diesem Filter.</p>
         </div>
 
         <div class="panel" style="margin: 20px 0;">
@@ -179,12 +211,14 @@
                     <input id="channel-list-name" type="text" v-model="listDraft.name" maxlength="100" placeholder="z. B. Meine Favoriten">
                     <label for="channel-list-description">Beschreibung</label>
                     <input id="channel-list-description" type="text" v-model="listDraft.description" maxlength="1000" placeholder="Optional">
-                    <label for="add-list-channel">XMLTV-Sender hinzufügen</label>
-                    <select id="add-list-channel" v-model="newListChannelId">
-                        <option value="">Sender auswählen…</option>
-                        <option v-for="channel in availableListChannels" :key="channel.id" :value="channel.id">{{ channel.name }} ({{ channel.id }})</option>
-                    </select>
-                    <button @click="addListChannel" :disabled="!newListChannelId">Zur Liste hinzufügen</button>
+                    <label for="list-channel-search">XMLTV-Sender suchen und hinzufügen</label>
+                    <input id="list-channel-search" type="search" v-model="listChannelSearch" placeholder="Name oder XMLTV-ID eingeben">
+                    <div class="channel-search-results">
+                        <button v-for="channel in filteredAvailableListChannels" :key="channel.id" class="channel-search-result" @click="addListChannel(channel.id)">
+                            <span>{{ channel.name }}</span><small>{{ channel.id }}</small>
+                        </button>
+                        <p v-if="listChannelSearch && !filteredAvailableListChannels.length" class="muted">Keine passenden, noch nicht hinzugefügten Sender.</p>
+                    </div>
                     <div class="toolbar">
                         <button @click="saveChannelList" :disabled="listBusy || !listDraft.name.trim()">{{ listBusy ? 'Speichere…' : 'Liste speichern' }}</button>
                         <button v-if="selectedListId" class="danger" @click="deleteChannelList" :disabled="listBusy">Liste löschen</button>
@@ -241,10 +275,20 @@
             <div class="panel">
                 <h2 class="section-heading">XMLTV-Sender und Darstellung</h2>
                 <p class="muted">Sender und Programme werden aus allen XMLTV-Dateien im Datenverzeichnis geladen. Hier kannst du bestehende Sendernamen, Logos und Zuordnungen anpassen.</p>
-                
-                <ul class="channel-list">
-                    <li v-for="channel in xmlChannels" :key="channel.id" class="channel-item">
-                        <img v-if="channel.icon" :src="channel.icon" class="channel-logo" />
+                <div class="xmltv-toolbar">
+                    <label for="xmltv-search">XMLTV-Sender suchen
+                        <input id="xmltv-search" class="inventory-filter" type="search" v-model="xmlChannelSearch" @input="xmlChannelPage = 0" placeholder="Name, ID oder Quelldatei">
+                    </label>
+                    <span class="channel-pagination-status">{{ filteredXmlChannels.length }} / {{ xmlChannels.length }} Sender</span>
+                </div>
+                <div class="page-controls">
+                    <button @click="xmlChannelPage--" :disabled="xmlChannelPage === 0">Zurück</button>
+                    <span class="channel-pagination-status">Seite {{ xmlChannelPage + 1 }} / {{ xmlChannelPageCount }}</span>
+                    <button @click="xmlChannelPage++" :disabled="xmlChannelPage + 1 >= xmlChannelPageCount">Weiter</button>
+                </div>
+                <ul class="channel-list xmltv-channel-list">
+                    <li v-for="channel in pagedXmlChannels" :key="channel.id" class="channel-item">
+                        <img v-if="channel.icon" :src="channel.icon" class="channel-logo" loading="lazy" />
                         <div v-else class="channel-logo" style="display:flex; align-items:center; justify-content:center; color:#555">N/A</div>
                         
                         <div class="channel-info">
@@ -278,13 +322,21 @@
                 <div v-if="xmlChannels.length === 0" style="padding: 20px; text-align: center; color: #888;">
                     Keine Sender gefunden. Prüfe, ob XMLTV-Dateien im Datenverzeichnis liegen.
                 </div>
+                <div v-else-if="!filteredXmlChannels.length" class="empty-state">Keine Sender passen zu deiner Suche.</div>
             </div>
 
             <div class="panel">
                 <h2 class="section-heading">Bisherige Senderanpassungen</h2>
                 <p class="muted">Globale Zuordnungen für noch nicht gerätespezifisch konfigurierte Installationen.</p>
+                <div class="page-controls">
+                    <input class="inventory-filter" type="search" v-model="mappingSearch" @input="mappingPage = 0" placeholder="Sendernummer oder XMLTV-ID filtern">
+                    <span class="channel-pagination-status">{{ filteredMappings.length }} Zuordnungen</span>
+                    <button @click="mappingPage--" :disabled="mappingPage === 0">Zurück</button>
+                    <span class="channel-pagination-status">Seite {{ mappingPage + 1 }} / {{ mappingPageCount }}</span>
+                    <button @click="mappingPage++" :disabled="mappingPage + 1 >= mappingPageCount">Weiter</button>
+                </div>
                 <ul class="channel-list">
-                    <li v-for="mapData in sortedMappings" :key="mapData.physical" class="channel-item">
+                    <li v-for="mapData in pagedMappings" :key="mapData.physical" class="channel-item">
                         <div style="font-size: 1.5em; font-weight: bold; color: #00a4dc; width: 60px;">{{ mapData.physical }}</div>
                         <img v-if="mapData.custom_logo" :src="mapData.custom_logo" class="channel-logo" />
                         <div style="flex-grow: 1;">
@@ -301,6 +353,7 @@
                         </div>
                     </li>
                 </ul>
+                <p v-if="!pagedMappings.length" class="empty-state">Keine Zuordnungen passen zu deiner Suche.</p>
             </div>
         </div>
         </section>
@@ -325,11 +378,20 @@
                 inventoryChannels: [],
                 inventoryLoading: false,
                 inventoryError: '',
+                inventorySearch: '',
+                inventoryPage: 0,
+                inventoryPageSize: 50,
+                xmlChannelSearch: '',
+                xmlChannelPage: 0,
+                xmlChannelPageSize: 40,
+                mappingSearch: '',
+                mappingPage: 0,
+                mappingPageSize: 40,
                 activeTab: 'devices',
                 channelLists: [],
                 selectedListId: '',
                 listDraft: { name: '', description: '', entries: [] },
-                newListChannelId: '',
+                listChannelSearch: '',
                 listBusy: false,
                 listError: false,
                 listMessage: '',
@@ -365,6 +427,36 @@
                         return channels;
                     }, {});
                 },
+                filteredInventoryChannels() {
+                    const query = this.inventorySearch.trim().toLocaleLowerCase();
+                    if (!query) return this.inventoryChannels;
+                    return this.inventoryChannels.filter(channel =>
+                        [channel.display_number, channel.display_name, channel.channel_id]
+                            .some(value => String(value || '').toLocaleLowerCase().includes(query))
+                    );
+                },
+                pagedInventoryChannels() {
+                    const start = this.inventoryPage * this.inventoryPageSize;
+                    return this.filteredInventoryChannels.slice(start, start + this.inventoryPageSize);
+                },
+                inventoryPageCount() {
+                    return Math.max(1, Math.ceil(this.filteredInventoryChannels.length / this.inventoryPageSize));
+                },
+                filteredXmlChannels() {
+                    const query = this.xmlChannelSearch.trim().toLocaleLowerCase();
+                    if (!query) return this.xmlChannels;
+                    return this.xmlChannels.filter(channel =>
+                        [channel.id, channel.name, channel.source_file]
+                            .some(value => String(value || '').toLocaleLowerCase().includes(query))
+                    );
+                },
+                pagedXmlChannels() {
+                    const start = this.xmlChannelPage * this.xmlChannelPageSize;
+                    return this.filteredXmlChannels.slice(start, start + this.xmlChannelPageSize);
+                },
+                xmlChannelPageCount() {
+                    return Math.max(1, Math.ceil(this.filteredXmlChannels.length / this.xmlChannelPageSize));
+                },
                 visibleListEntries() {
                     const start = this.listEntryPage * this.listPageSize;
                     return this.listDraft.entries
@@ -374,9 +466,16 @@
                 listPageCount() {
                     return Math.max(1, Math.ceil(this.listDraft.entries.length / this.listPageSize));
                 },
-                availableListChannels() {
+                filteredAvailableListChannels() {
+                    const query = this.listChannelSearch.trim().toLocaleLowerCase();
                     const existing = new Set(this.listDraft.entries.map(entry => entry.logical_channel_id));
-                    return this.xmlChannels.filter(channel => !existing.has(channel.id));
+                    if (!query) return [];
+                    return this.xmlChannels
+                        .filter(channel =>
+                            !existing.has(channel.id) &&
+                            [channel.name, channel.id].some(value => String(value || '').toLocaleLowerCase().includes(query))
+                        )
+                        .slice(0, 30);
                 },
                 // Broadcast order: 6.2 < 6.6 < 6.10 < 6.12 < 13.4 < 20.1
                 sortedMappings() {
@@ -387,6 +486,21 @@
                             const pb = String(b.physical).split(/[.\-]/).map(n => parseInt(n, 10) || 0);
                             return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
                         });
+                },
+                filteredMappings() {
+                    const query = this.mappingSearch.trim().toLocaleLowerCase();
+                    if (!query) return this.sortedMappings;
+                    return this.sortedMappings.filter(mapping =>
+                        [mapping.physical, mapping.xmltv_id, mapping.custom_name]
+                            .some(value => String(value || '').toLocaleLowerCase().includes(query))
+                    );
+                },
+                pagedMappings() {
+                    const start = this.mappingPage * this.mappingPageSize;
+                    return this.filteredMappings.slice(start, start + this.mappingPageSize);
+                },
+                mappingPageCount() {
+                    return Math.max(1, Math.ceil(this.filteredMappings.length / this.mappingPageSize));
                 }
             },
             methods: {
@@ -421,6 +535,7 @@
                     }
                     this.inventoryLoading = true;
                     this.inventoryError = '';
+                    this.inventoryPage = 0;
                     try {
                         const response = await fetch('/api/v1/devices/' + encodeURIComponent(this.selectedDeviceId) + '/channels');
                         const data = await response.json();
@@ -523,10 +638,10 @@
                         this.listMessage = error.message || 'Favoritenliste konnte nicht geladen werden.';
                     }
                 },
-                addListChannel() {
-                    if (!this.newListChannelId || this.listDraft.entries.some(entry => entry.logical_channel_id === this.newListChannelId)) return;
-                    this.listDraft.entries.push({ logical_channel_id: this.newListChannelId });
-                    this.newListChannelId = '';
+                addListChannel(channelId) {
+                    if (this.listDraft.entries.some(entry => entry.logical_channel_id === channelId)) return;
+                    this.listDraft.entries.push({ logical_channel_id: channelId });
+                    this.listChannelSearch = '';
                     this.listEntryPage = this.listPageCount - 1;
                 },
                 moveListEntry(index, direction) {
