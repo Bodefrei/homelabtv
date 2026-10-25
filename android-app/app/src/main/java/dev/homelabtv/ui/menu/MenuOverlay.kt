@@ -1,6 +1,9 @@
 package dev.homelabtv.ui.menu
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +60,7 @@ fun MenuOverlay(
     devicePaired: Boolean,
     inventorySyncStatus: String,
     inventorySyncInProgress: Boolean,
+    channelListStatus: String,
     tunerInfo: String,
     onServerUrlChange: (String) -> Unit,
     onPairDevice: () -> Unit,
@@ -77,15 +81,27 @@ fun MenuOverlay(
     modifier: Modifier = Modifier,
 ) {
     val firstItem = remember { FocusRequester() }
+    val pairingItem = remember { FocusRequester() }
+    val settingsScrollState = rememberScrollState()
     LaunchedEffect(showSettings) {
         delay(100)
         try {
-            firstItem.requestFocus()
+            if (showSettings && !devicePaired) pairingItem.requestFocus()
+            else firstItem.requestFocus()
         } catch (_: Exception) {}
+    }
+    LaunchedEffect(pairingCode) {
+        if (pairingCode != null) settingsScrollState.animateScrollTo(0)
     }
 
     Row(modifier.fillMaxSize()) {
-        Column(Modifier.width(380.dp).fillMaxHeight().background(Color(0xF2161616)).padding(32.dp)) {
+        Column(
+            Modifier.width(380.dp)
+                .fillMaxHeight()
+                .background(Color(0xF2161616))
+                .verticalScroll(settingsScrollState)
+                .padding(32.dp)
+        ) {
             Row {
                 Text("Homelab", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text("TV", color = JellyfinBlue, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -96,6 +112,46 @@ fun MenuOverlay(
 
             if (showSettings) {
                 Text("Settings", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(16.dp))
+                MenuListItem(
+                    when {
+                        devicePaired -> "Device paired"
+                        pairingInProgress -> "Pairing in progress…"
+                        else -> "Pair this TV"
+                    },
+                    Icons.Default.Settings,
+                    onPairDevice,
+                    focusRequester = if (devicePaired) null else pairingItem,
+                )
+                if (pairingCode != null) {
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(Color(0xFF102C3A), RoundedCornerShape(8.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            "Pairing code — enter it in the HomelabTV web interface:",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            pairingCode,
+                            color = JellyfinBlue,
+                            fontSize = 40.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 8.sp,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                        Text(
+                            "The code expires after five minutes.",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                if (pairingStatus.isNotBlank()) {
+                    Text(pairingStatus, color = TextSecondary, fontSize = 12.sp)
+                }
                 Spacer(Modifier.height(16.dp))
                 MenuListItem("Reload Channel List", Icons.Default.Refresh, onReloadChannels, focusRequester = firstItem)
                 MenuListItem("Scan Channels (TV Setup)", Icons.Default.Search, onScanChannels)
@@ -121,33 +177,6 @@ fun MenuOverlay(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                MenuListItem(
-                    when {
-                        devicePaired -> "Device paired"
-                        pairingInProgress -> "Pairing in progress…"
-                        else -> "Pair this TV"
-                    },
-                    Icons.Default.Settings,
-                    onPairDevice,
-                )
-                if (pairingCode != null) {
-                    Text(
-                        "Enter this code in the HomelabTV web interface:",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                    )
-                    Text(
-                        pairingCode,
-                        color = JellyfinBlue,
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 6.sp,
-                        modifier = Modifier.padding(vertical = 4.dp),
-                    )
-                }
-                if (pairingStatus.isNotBlank()) {
-                    Text(pairingStatus, color = TextSecondary, fontSize = 12.sp)
-                }
                 if (devicePaired) {
                     MenuListItem(
                         if (inventorySyncInProgress) "Syncing Channel Inventory…" else "Sync Channel Inventory",
@@ -156,6 +185,9 @@ fun MenuOverlay(
                     )
                     if (inventorySyncStatus.isNotBlank()) {
                         Text(inventorySyncStatus, color = TextSecondary, fontSize = 12.sp)
+                    }
+                    if (channelListStatus.isNotBlank()) {
+                        Text(channelListStatus, color = TextSecondary, fontSize = 12.sp)
                     }
                 }
                 Spacer(Modifier.height(16.dp))

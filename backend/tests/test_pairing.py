@@ -186,7 +186,11 @@ class PairingApiTests(unittest.TestCase):
         self.assertEqual(logged_in.status_code, 200)
         self.assertIn("httponly", logged_in.headers["set-cookie"].lower())
         self.assertIn("samesite=strict", logged_in.headers["set-cookie"].lower())
-        self.assertEqual(self.client.get("/").status_code, 200)
+        page = self.client.get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("XMLTV &amp; Sender", page.text)
+        self.assertIn("Gemeinsame Favoritenlisten", page.text)
+        self.assertIn("Fernseher und Senderzuordnung", page.text)
         self.assertEqual(self.client.get("/api/mappings").status_code, 200)
 
         logged_out = self.client.post("/api/v1/admin/logout")
@@ -218,8 +222,8 @@ class PairingApiTests(unittest.TestCase):
         )
         self.assertEqual(identity.status_code, 401)
 
-    def paired_device(self):
-        payload = self.pair_payload()
+    def paired_device(self, device_id="test-tv-0001"):
+        payload = self.pair_payload(device_id=device_id)
         started = self.client.post("/api/v1/devices/pair", json=payload).json()
         approved = self.client.post(
             "/api/v1/pairing/approve",
@@ -338,6 +342,134 @@ class PairingApiTests(unittest.TestCase):
         finally:
             db.close()
         self.assertEqual(revisions, [(1, 2), (2, 2)])
+
+    def test_shared_channel_list_resolves_in_order_to_each_devices_channel_ids(self):
+        tv_one, credential_one = self.paired_device("test-tv-one")
+        tv_two, credential_two = self.paired_device("test-tv-two")
+        headers_one = {"Authorization": f"Bearer {credential_one}"}
+        headers_two = {"Authorization": f"Bearer {credential_two}"}
+        admin = self.admin_headers()
+
+        for device_id, credential, channels in (
+            (tv_one, credential_one, [(110, "7.1", "One News"), (120, "7.2", "One Sports")]),
+            (tv_two, credential_two, [(210, "2.1", "Two News"), (220, "2.2", "Two Sports")]),
+        ):
+            entries = [self.inventory_channel(*channel) for channel in channels]
+            synced = self.client.put(
+                "/api/v1/devices/me/channels",
+                headers={"Authorization": f"Bearer {credential}"},
+                json=self.inventory_payload(entries),
+            )
+            self.assertEqual(synced.status_code, 200, device_id)
+
+        for device_id, channel_id, xmltv_id in (
+            (tv_one, 110, "news.xml"),
+            (tv_one, 120, "sports.xml"),
+            (tv_two, 210, "news.xml"),
+            (tv_two, 220, "sports.xml"),
+        ):
+            mapped = self.client.put(
+                f"/api/v1/devices/{device_id}/channels/{channel_id}/mapping",
+                headers=admin,
+                json={"xmltv_id": xmltv_id},
+            )
+            self.assertEqual(mapped.status_code, 200)
+
+        updated = self.client.put(
+            "/api/v1/devices/me/channels",
+            headers=headers_one,
+            json=self.inventory_payload([
+                self.inventory_channel(110, "7.1", "One News HD"),
+                self.inventory_channel(120, "7.2", "One Sports"),
+            ]),
+        )
+        self.assertEqual(updated.status_code, 200)
+        refreshed = self.client.get(
+            f"/api/v1/devices/{tv_one}/channels",
+            headers=admin,
+        )
+        self.assertEqual(
+            {item["channel_id"]: item["xmltv_id"] for item in refreshed.json()},
+            {110: "news.xml", 120: "sports.xml"},
+        )
+
+        created = self.client.post(
+            "/api/v1/channel-lists",
+            headers=admin,
+            json={
+                "name": "Abend",
+                "description": "Gemeinsame Favoriten",
+                "entries": [
+                    {"logical_channel_id": "sports.xml"},
+                    {"logical_channel_id": "news.xml"},
+                    {"logical_channel_id": "missing.xml"},
+                ],
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        list_id = created.json()["id"]
+        self.assertEqual(
+            [entry["logical_channel_id"] for entry in created.json()["entries"]],
+            ["sports.xml", "news.xml", "missing.xml"],
+        )
+
+        for device_id in (tv_one, tv_two):
+            assigned = self.client.put(
+                f"/api/v1/devices/{device_id}/channel-list",
+                headers=admin,
+                json={"list_id": list_id},
+            )
+            self.assertEqual(assigned.status_code, 200)
+
+        resolved_one = self.client.get("/api/v1/devices/me/channel-list", headers=headers_one)
+        resolved_two = self.client.get("/api/v1/devices/me/channel-list", headers=headers_two)
+        self.assertEqual(
+            [item["channel_id"] for item in resolved_one.json()["channels"]],
+            [120, 110, None],
+        )
+        self.assertFalse(resolved_one.json()["channels"][-1]["available"])
+        self.assertEqual(
+            [item["channel_id"] for item in resolved_two.json()["channels"]],
+            [220, 210, None],
+        )
+        self.assertFalse(resolved_two.json()["channels"][-1]["available"])
+
+    def test_device_specific_mapping_overrides_legacy_guide_mapping(self):
+        device_id, credential = self.paired_device()
+        channel = self.inventory_channel(101, "7.1", "Device channel")
+        response = self.client.put(
+            "/api/v1/devices/me/channels",
+            headers={"Authorization": f"Bearer {credential}"},
+            json=self.inventory_payload([channel]),
+        )
+        self.assertEqual(response.status_code, 200)
+        mapped = self.client.put(
+            f"/api/v1/devices/{device_id}/channels/101/mapping",
+            headers=self.admin_headers(),
+            json={"xmltv_id": "device-news.xml"},
+        )
+        self.assertEqual(mapped.status_code, 200)
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            db.execute(
+                "INSERT INTO channel_mappings (physical_channel, xmltv_id) VALUES (?, ?)",
+                ("7.1", "legacy-news.xml"),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with (
+            patch("main.xmltv_files", return_value=[]),
+            patch("main.parse_xmltv", return_value=[]),
+            patch("main.parse_xmltv_programs", return_value=[]),
+        ):
+            response = self.client.get(
+                "/api/guide",
+                headers={"Authorization": f"Bearer {credential}"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["xmltv_id"], "device-news.xml")
 
     def test_channel_inventory_rejects_wrong_hash_and_duplicate_ids(self):
         _, credential = self.paired_device()

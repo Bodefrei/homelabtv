@@ -39,10 +39,11 @@ class GuideRepository(context: Context) {
                 )
         }
 
-    suspend fun refresh(serverUrl: String): Boolean =
+    suspend fun refresh(serverUrl: String, deviceCredential: String? = null): Boolean =
         withContext(Dispatchers.IO) {
             try {
-                val guide = RetrofitClient.getInstance(serverUrl).getEnrichedGuide()
+                val authorization = deviceCredential?.let { "Bearer $it" }
+                val guide = RetrofitClient.getInstance(serverUrl).getEnrichedGuide(authorization)
                 cacheFile.writeText(gson.toJson(guide))
                 _state.value =
                     _state.value.copy(

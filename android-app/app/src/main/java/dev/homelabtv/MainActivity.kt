@@ -443,6 +443,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     devicePaired = viewModel.devicePaired,
                     inventorySyncStatus = viewModel.inventorySyncStatus,
                     inventorySyncInProgress = viewModel.inventorySyncInProgress,
+                    channelListStatus = viewModel.channelListStatus,
                     tunerInfo =
                         currentChannel?.let {
                             "${it.displayName} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"

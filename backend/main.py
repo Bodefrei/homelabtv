@@ -99,6 +99,27 @@ class DeviceChannelInventoryRequest(BaseModel):
     channels: list[DeviceChannelInventoryEntry] = Field(max_length=5000)
 
 
+class DeviceChannelMappingRequest(BaseModel):
+    xmltv_id: str | None = Field(default=None, max_length=256)
+
+
+class ChannelListEntryRequest(BaseModel):
+    logical_channel_id: str = Field(min_length=1, max_length=256)
+    display_name: str | None = Field(default=None, max_length=512)
+    custom_name: str | None = Field(default=None, max_length=512)
+    hidden: bool = False
+
+
+class ChannelListRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=1000)
+    entries: list[ChannelListEntryRequest] = Field(max_length=5000)
+
+
+class DeviceChannelListAssignmentRequest(BaseModel):
+    list_id: str | None = Field(default=None, max_length=128)
+
+
 # Serve assets and templates relative to this module, independent of the process working directory.
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BACKEND_DIR, "static")
@@ -353,7 +374,8 @@ async def get_current_device(request: Request):
     cursor = await db.execute(
         """
         SELECT id, friendly_name, app_version, android_version, manufacturer, model,
-               pairing_status, last_seen_at, last_sync_at, available_channels, assigned_channel_list
+               pairing_status, last_seen_at, last_sync_at, available_channels,
+               assigned_channel_list, inventory_revision
         FROM devices WHERE id = ?
         """,
         (authenticated_device_id,),
@@ -477,9 +499,9 @@ async def sync_device_channels(payload: DeviceChannelInventoryRequest, request: 
             INSERT INTO device_channels (
                 device_id, channel_id, input_id, display_number, display_name,
                 original_display_name, service_type, channel_type, network_id,
-                transport_stream_id, service_id, internal_provider_id,
+                transport_stream_id, service_id, internal_provider_id, xmltv_id,
                 first_seen_at, last_seen_at, removed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             ON CONFLICT(device_id, channel_id) DO UPDATE SET
                 input_id = excluded.input_id,
                 display_number = excluded.display_number,
@@ -507,6 +529,7 @@ async def sync_device_channels(payload: DeviceChannelInventoryRequest, request: 
                 channel.transport_stream_id,
                 channel.service_id,
                 channel.internal_provider_id,
+                None,
                 now,
                 now,
             ),
@@ -565,7 +588,7 @@ async def get_device_channels(device_id: str, request: Request):
         """
         SELECT channel_id, input_id, display_number, display_name, original_display_name,
                service_type, channel_type, network_id, transport_stream_id, service_id,
-               internal_provider_id, first_seen_at, last_seen_at, removed_at
+               internal_provider_id, xmltv_id, first_seen_at, last_seen_at, removed_at
         FROM device_channels
         WHERE device_id = ?
         ORDER BY removed_at IS NOT NULL, display_number, channel_id
@@ -587,13 +610,257 @@ async def get_device_channels(device_id: str, request: Request):
             "transport_stream_id": row[8],
             "service_id": row[9],
             "internal_provider_id": row[10],
-            "first_seen_at": row[11],
-            "last_seen_at": row[12],
-            "removed_at": row[13],
-            "available": row[13] is None,
+            "xmltv_id": row[11],
+            "first_seen_at": row[12],
+            "last_seen_at": row[13],
+            "removed_at": row[14],
+            "available": row[14] is None,
         }
         for row in rows
     ]
+
+
+
+
+@app.put("/api/v1/devices/{device_id}/channels/{channel_id}/mapping")
+async def map_device_channel(
+    device_id: str,
+    channel_id: int,
+    payload: DeviceChannelMappingRequest,
+    request: Request,
+):
+    await require_admin(request)
+    db = await get_db_connection()
+    cursor = await db.execute(
+        "SELECT 1 FROM device_channels WHERE device_id = ? AND channel_id = ?",
+        (device_id, channel_id),
+    )
+    if await cursor.fetchone() is None:
+        await db.close()
+        raise HTTPException(status_code=404, detail="Device channel not found")
+    await db.execute(
+        "UPDATE device_channels SET xmltv_id = ? WHERE device_id = ? AND channel_id = ?",
+        (payload.xmltv_id, device_id, channel_id),
+    )
+    await db.commit()
+    await db.close()
+    return {"device_id": device_id, "channel_id": channel_id, "xmltv_id": payload.xmltv_id}
+
+
+async def _channel_list_records(db):
+    cursor = await db.execute(
+        "SELECT id, name, description, created_at, updated_at FROM channel_lists "
+        "ORDER BY name COLLATE NOCASE, id"
+    )
+    lists = await cursor.fetchall()
+    entries_cursor = await db.execute(
+        """
+        SELECT id, list_id, logical_channel_id, display_name, custom_name, sort_index, hidden
+        FROM channel_list_entries ORDER BY list_id, sort_index, id
+        """
+    )
+    entries = await entries_cursor.fetchall()
+    entries_by_list = {}
+    for row in entries:
+        entries_by_list.setdefault(row[1], []).append(
+            {
+                "id": row[0],
+                "logical_channel_id": row[2],
+                "display_name": row[3],
+                "custom_name": row[4],
+                "sort_index": row[5],
+                "hidden": bool(row[6]),
+            }
+        )
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "description": row[2],
+            "created_at": row[3],
+            "updated_at": row[4],
+            "entries": entries_by_list.get(row[0], []),
+        }
+        for row in lists
+    ]
+
+
+async def _save_channel_list_entries(db, list_id: str, entries: list[ChannelListEntryRequest], now: int):
+    logical_ids = [entry.logical_channel_id for entry in entries]
+    if len(logical_ids) != len(set(logical_ids)):
+        raise HTTPException(status_code=422, detail="Channel list contains duplicate logical channel IDs")
+    await db.execute("DELETE FROM channel_list_entries WHERE list_id = ?", (list_id,))
+    for sort_index, entry in enumerate(entries):
+        await db.execute(
+            """
+            INSERT INTO channel_list_entries (
+                id, list_id, logical_channel_id, display_name, custom_name,
+                sort_index, hidden, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                list_id,
+                entry.logical_channel_id,
+                entry.display_name,
+                entry.custom_name,
+                sort_index,
+                int(entry.hidden),
+                now,
+                now,
+            ),
+        )
+
+
+@app.get("/api/v1/channel-lists")
+async def get_channel_lists(request: Request):
+    await require_admin(request)
+    db = await get_db_connection()
+    result = await _channel_list_records(db)
+    await db.close()
+    return result
+
+
+@app.post("/api/v1/channel-lists")
+async def create_channel_list(payload: ChannelListRequest, request: Request):
+    await require_admin(request)
+    list_id = str(uuid.uuid4())
+    now = int(time.time())
+    db = await get_db_connection()
+    await db.execute("BEGIN IMMEDIATE")
+    await db.execute(
+        """
+        INSERT INTO channel_lists (id, name, description, is_system, is_shared, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, 0, 1, 'admin', ?, ?)
+        """,
+        (list_id, payload.name.strip(), payload.description, now, now),
+    )
+    await _save_channel_list_entries(db, list_id, payload.entries, now)
+    await db.commit()
+    result = next(item for item in await _channel_list_records(db) if item["id"] == list_id)
+    await db.close()
+    return result
+
+
+@app.put("/api/v1/channel-lists/{list_id}")
+async def update_channel_list(list_id: str, payload: ChannelListRequest, request: Request):
+    await require_admin(request)
+    now = int(time.time())
+    db = await get_db_connection()
+    await db.execute("BEGIN IMMEDIATE")
+    cursor = await db.execute("SELECT 1 FROM channel_lists WHERE id = ?", (list_id,))
+    if await cursor.fetchone() is None:
+        await db.close()
+        raise HTTPException(status_code=404, detail="Channel list not found")
+    await db.execute(
+        "UPDATE channel_lists SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+        (payload.name.strip(), payload.description, now, list_id),
+    )
+    await _save_channel_list_entries(db, list_id, payload.entries, now)
+    await db.commit()
+    result = next(item for item in await _channel_list_records(db) if item["id"] == list_id)
+    await db.close()
+    return result
+
+
+@app.delete("/api/v1/channel-lists/{list_id}")
+async def delete_channel_list(list_id: str, request: Request):
+    await require_admin(request)
+    db = await get_db_connection()
+    await db.execute("DELETE FROM device_list_assignments WHERE list_id = ?", (list_id,))
+    await db.execute("DELETE FROM channel_list_entries WHERE list_id = ?", (list_id,))
+    cursor = await db.execute("DELETE FROM channel_lists WHERE id = ?", (list_id,))
+    await db.commit()
+    deleted = cursor.rowcount
+    await db.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Channel list not found")
+    return {"deleted": True}
+
+
+@app.put("/api/v1/devices/{device_id}/channel-list")
+async def assign_device_channel_list(
+    device_id: str,
+    payload: DeviceChannelListAssignmentRequest,
+    request: Request,
+):
+    await require_admin(request)
+    db = await get_db_connection()
+    device_cursor = await db.execute("SELECT 1 FROM devices WHERE id = ?", (device_id,))
+    if await device_cursor.fetchone() is None:
+        await db.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+    if payload.list_id is not None:
+        list_cursor = await db.execute("SELECT 1 FROM channel_lists WHERE id = ?", (payload.list_id,))
+        if await list_cursor.fetchone() is None:
+            await db.close()
+            raise HTTPException(status_code=404, detail="Channel list not found")
+    now = int(time.time())
+    await db.execute("DELETE FROM device_list_assignments WHERE device_id = ?", (device_id,))
+    if payload.list_id is not None:
+        await db.execute(
+            """
+            INSERT INTO device_list_assignments (id, device_id, list_id, is_active, assigned_at)
+            VALUES (?, ?, ?, 1, ?)
+            """,
+            (str(uuid.uuid4()), device_id, payload.list_id, now),
+        )
+    await db.execute(
+        "UPDATE devices SET assigned_channel_list = ?, updated_at = ? WHERE id = ?",
+        (payload.list_id, now, device_id),
+    )
+    await db.commit()
+    await db.close()
+    return {"device_id": device_id, "list_id": payload.list_id}
+
+
+@app.get("/api/v1/devices/me/channel-list")
+async def get_current_device_channel_list(request: Request):
+    device_id = await _device_for_credential(request)
+    db = await get_db_connection()
+    cursor = await db.execute(
+        """
+        SELECT l.id, l.name
+        FROM device_list_assignments a
+        JOIN channel_lists l ON l.id = a.list_id
+        WHERE a.device_id = ? AND a.is_active = 1
+        """,
+        (device_id,),
+    )
+    assigned_list = await cursor.fetchone()
+    if assigned_list is None:
+        await db.close()
+        return {"active": False, "list_id": None, "name": None, "channels": []}
+    entries_cursor = await db.execute(
+        """
+        SELECT e.logical_channel_id, e.display_name, e.custom_name,
+               c.channel_id, c.display_number, c.display_name
+        FROM channel_list_entries e
+        LEFT JOIN device_channels c
+            ON c.device_id = ? AND c.xmltv_id = e.logical_channel_id AND c.removed_at IS NULL
+        WHERE e.list_id = ? AND e.hidden = 0
+        ORDER BY e.sort_index, e.id
+        """,
+        (device_id, assigned_list[0]),
+    )
+    rows = await entries_cursor.fetchall()
+    await db.close()
+    return {
+        "active": True,
+        "list_id": assigned_list[0],
+        "name": assigned_list[1],
+        "channels": [
+            {
+                "logical_channel_id": row[0],
+                "display_name": row[2] or row[1],
+                "channel_id": row[3],
+                "display_number": row[4],
+                "device_channel_name": row[5],
+                "available": row[3] is not None,
+            }
+            for row in rows
+        ],
+    }
 
 
 def _device_record(row):
@@ -609,6 +876,7 @@ def _device_record(row):
         "last_sync_at": row[8],
         "available_channels": row[9],
         "assigned_channel_list": row[10],
+        "inventory_revision": row[11],
     }
 
 
@@ -619,7 +887,8 @@ async def list_devices(request: Request):
     rows = await db.execute(
         """
         SELECT id, friendly_name, app_version, android_version, manufacturer, model,
-               pairing_status, last_seen_at, last_sync_at, available_channels, assigned_channel_list
+               pairing_status, last_seen_at, last_sync_at, available_channels,
+               assigned_channel_list, inventory_revision
         FROM devices ORDER BY friendly_name ASC
         """
     )
@@ -635,7 +904,8 @@ async def get_device(device_id: str, request: Request):
     cursor = await db.execute(
         """
         SELECT id, friendly_name, app_version, android_version, manufacturer, model,
-               pairing_status, last_seen_at, last_sync_at, available_channels, assigned_channel_list
+               pairing_status, last_seen_at, last_sync_at, available_channels,
+               assigned_channel_list, inventory_revision
         FROM devices WHERE id = ?
         """,
         (device_id,),
@@ -1133,9 +1403,33 @@ async def get_enriched_guide(request: Request):
     """The master endpoint for the Android TV app. Returns physical channels merged
     with XMLTV schedule data, channel logos, and TMDB artwork (served from the
     local tmdb_cache so repeat requests are fast and cheap)."""
-    # 1. Get mappings with overrides
+    # 1. Prefer mappings for this paired device; keep legacy mappings for
+    # clients that are not paired yet.
+    authorization = request.headers.get("authorization", "")
+    scheme, separator, _ = authorization.partition(" ")
+    device_id = None
+    if separator and scheme.lower() == "bearer":
+        device_id = await _device_for_credential(request)
     db = await get_db_connection()
-    cursor = await db.execute("SELECT physical_channel, xmltv_id, custom_name, custom_image, xml_source, custom_logo FROM channel_mappings")
+    if device_id is not None:
+        cursor = await db.execute(
+            """
+            SELECT c.display_number, COALESCE(c.xmltv_id, m.xmltv_id),
+                   m.custom_name, m.custom_image, m.xml_source, m.custom_logo
+            FROM device_channels c
+            LEFT JOIN channel_mappings m ON m.physical_channel = c.display_number
+            WHERE c.device_id = ? AND c.removed_at IS NULL
+              AND COALESCE(c.xmltv_id, m.xmltv_id) IS NOT NULL
+            """,
+            (device_id,),
+        )
+    else:
+        cursor = await db.execute(
+            """
+            SELECT physical_channel, xmltv_id, custom_name, custom_image, xml_source, custom_logo
+            FROM channel_mappings
+            """
+        )
     mappings = {row[0]: {"xmltv_id": row[1], "custom_name": row[2], "custom_image": row[3], "xml_source": row[4], "custom_logo": row[5]} for row in await cursor.fetchall()}
 
     # 2. Get all XMLTV channels (for names/logos) and programs from every XML source

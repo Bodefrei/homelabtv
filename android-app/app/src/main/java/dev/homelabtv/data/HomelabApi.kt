@@ -70,6 +70,22 @@ data class DeviceChannelInventoryResponse(
     val channel_count: Int,
 )
 
+data class DeviceChannelListChannel(
+    val logical_channel_id: String,
+    val display_name: String?,
+    val channel_id: Long?,
+    val display_number: String?,
+    val device_channel_name: String?,
+    val available: Boolean,
+)
+
+data class DeviceChannelListResponse(
+    val active: Boolean,
+    val list_id: String?,
+    val name: String?,
+    val channels: List<DeviceChannelListChannel>,
+)
+
 fun calculateDeviceChannelInventoryHash(channels: List<DeviceChannelInventoryEntry>): String {
     val bytes = ByteArrayOutputStream()
     for (channel in channels.sortedBy { it.channel_id }) {
@@ -102,7 +118,7 @@ fun calculateDeviceChannelInventoryHash(channels: List<DeviceChannelInventoryEnt
 
 interface HomelabApiService {
     @GET("api/guide")
-    suspend fun getEnrichedGuide(): List<ChannelGuide>
+    suspend fun getEnrichedGuide(@Header("Authorization") authorization: String?): List<ChannelGuide>
 
     @POST("api/v1/devices/pair")
     suspend fun startPairing(@Body request: PairingStartRequest): PairingStartResponse
@@ -115,6 +131,9 @@ interface HomelabApiService {
 
     @GET("api/v1/devices/me")
     suspend fun getCurrentDevice(@Header("Authorization") authorization: String): RegisteredDevice
+
+    @GET("api/v1/devices/me/channel-list")
+    suspend fun getCurrentDeviceChannelList(@Header("Authorization") authorization: String): DeviceChannelListResponse
 
     @PUT("api/v1/devices/me/channels")
     suspend fun syncDeviceChannels(

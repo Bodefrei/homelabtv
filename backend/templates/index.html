@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HomelabTV - Channel Mapping</title>
+    <title>HomelabTV – Verwaltung</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a1a1a; color: #fff; margin: 0; padding: 20px; }
@@ -26,24 +26,68 @@
         .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; background: #444; margin-left: 10px; }
         .chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; background: #063a4d; border: 1px solid #00a4dc; color: #9adcf0; margin: 3px 4px 0 0; }
         .chip a { color: #ff8a80; text-decoration: none; margin-left: 6px; font-weight: bold; }
+        .inventory-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+        .inventory-controls select { min-width: min(100%, 320px); padding: 9px; border: 1px solid #444; border-radius: 4px; background: #111; color: #fff; }
+        .inventory-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        .inventory-table th, .inventory-table td { padding: 10px 8px; border-bottom: 1px solid #383838; text-align: left; }
+        .inventory-table th { color: #aaa; font-size: .85em; }
+        .inventory-table tr.unavailable { color: #888; }
+        .inventory-error { color: #ff8a80; }
+        @media (max-width: 700px) { .inventory-table { font-size: .85em; } .inventory-table th, .inventory-table td { padding: 7px 4px; } }
+        body { background: #f3f6fa; color: #253044; padding: 24px clamp(16px, 3vw, 44px); }
+        .header { border-bottom: 1px solid #dce3eb; }
+        .header h1 { color: #126b9a; }
+        .panel { background: #fff; border: 1px solid #e1e7ee; box-shadow: 0 5px 18px rgba(34, 54, 78, .07); }
+        .channel-item { border-bottom-color: #e8edf2; }
+        .channel-item:hover { background: #f5f9fc; }
+        .channel-logo { background: #eef2f6; }
+        input[type="text"], .inventory-controls select { background: #fff; border-color: #cbd5df; color: #253044; }
+        button { background: #137eae; }
+        button:hover { background: #0d668f; }
+        .badge { background: #e8eef4; color: #526173; }
+        .inventory-controls, .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .tabs { display: flex; gap: 8px; margin: 20px 0; border-bottom: 1px solid #dce3eb; }
+        .tabs button { margin: 0 0 -1px; padding: 12px 20px; background: transparent; border-radius: 8px 8px 0 0; color: #5b6879; border-bottom: 3px solid transparent; }
+        .tabs button.active { color: #126b9a; background: #e8f4fa; border-bottom-color: #137eae; font-weight: 700; }
+        .section-heading { margin-top: 0; color: #29384b; }
+        .muted { color: #637184; }
+        .inventory-table th { color: #586779; }
+        .inventory-table th, .inventory-table td { border-bottom-color: #e5ebf1; }
+        .inventory-table tr.unavailable { background: #f6f7f8; color: #8691a0; }
+        .inventory-table select, .list-editor select, .list-editor input { padding: 8px; border: 1px solid #cbd5df; border-radius: 5px; background: #fff; color: #253044; }
+        .list-layout { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 2fr); gap: 20px; }
+        .list-editor { display: grid; gap: 12px; }
+        .list-entry { display: grid; grid-template-columns: 42px minmax(100px, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e2e8ef; border-radius: 7px; margin: 8px 0; background: #fbfcfd; }
+        .list-entry-actions { display: flex; gap: 4px; }
+        .list-entry-actions button { margin: 0; padding: 6px 10px; }
+        .empty-state { padding: 22px; text-align: center; color: #718096; background: #f7f9fb; border-radius: 8px; }
+        .status-ok { color: #18794e; }
+        .status-warn { color: #9b5c00; }
+        @media (max-width: 760px) { .list-layout { grid-template-columns: 1fr; } .header { align-items: flex-start; gap: 10px; flex-direction: column; } }
     </style>
 </head>
 <body>
     {% raw %}
     <div id="app">
         <div class="header">
-            <h1>HomelabTV Settings</h1>
+            <h1>HomelabTV Verwaltung</h1>
             <div>
-                <button @click="logout">Log out</button>
-                <button @click="fetchData">Refresh Data</button>
+                <button @click="logout">Abmelden</button>
+                <button @click="fetchData">Daten aktualisieren</button>
             </div>
         </div>
 
+        <nav class="tabs" aria-label="Hauptbereiche">
+            <button :class="{ active: activeTab === 'devices' }" @click="activeTab = 'devices'">Fernseher</button>
+            <button :class="{ active: activeTab === 'xmltv' }" @click="activeTab = 'xmltv'">XMLTV &amp; Sender</button>
+        </nav>
+
+        <section v-if="activeTab === 'devices'">
         <div class="panel pairing-panel">
-            <h2>Pair an Android TV</h2>
-            <p style="color: #aaa;">Enter the six-digit code shown by HomelabTV on the TV. Pairing codes expire after five minutes.</p>
+            <h2 class="section-heading">Fernseher koppeln</h2>
+            <p class="muted">Gib den sechsstelligen Code ein, der auf dem Fernseher angezeigt wird. Der Code läuft nach fünf Minuten ab.</p>
             <form class="pairing-form" @submit.prevent="reviewPairing(true)">
-                <label for="pairing-code">TV pairing code</label>
+                <label for="pairing-code">Pairing-Code</label>
                 <input
                     id="pairing-code"
                     type="text"
@@ -56,16 +100,129 @@
                     :disabled="pairingBusy"
                     required
                 />
-                <button type="submit" :disabled="pairingBusy || pairingCode.length !== 6">Approve device</button>
-                <button type="button" class="danger" @click="reviewPairing(false)" :disabled="pairingBusy || pairingCode.length !== 6">Reject</button>
+                <button type="submit" :disabled="pairingBusy || pairingCode.length !== 6">Fernseher freigeben</button>
+                <button type="button" class="danger" @click="reviewPairing(false)" :disabled="pairingBusy || pairingCode.length !== 6">Ablehnen</button>
             </form>
-            <p v-if="pairingMessage" role="status" :style="{ color: pairingError ? '#ff8a80' : '#9adcf0' }">{{ pairingMessage }}</p>
+            <p v-if="pairingMessage" role="status" :class="pairingError ? 'inventory-error' : 'status-ok'">{{ pairingMessage }}</p>
         </div>
 
+        <div class="panel" style="margin: 20px 0;">
+            <h2 class="section-heading">Fernseher und Senderzuordnung</h2>
+            <p class="muted">Ordne die Sender-IDs dieses Fernsehers ihren XMLTV-Sendern zu. Diese Zuordnung ist gerätespezifisch.</p>
+            <div class="inventory-controls">
+                <label for="inventory-device">Fernseher</label>
+                <select id="inventory-device" v-model="selectedDeviceId" @change="onDeviceSelected" :disabled="devicesLoading || devices.length === 0">
+                    <option value="" disabled>Fernseher auswählen</option>
+                    <option v-for="device in devices" :key="device.id" :value="device.id">
+                        {{ device.friendly_name }} — {{ device.pairing_status }} ({{ device.available_channels || 0 }} Sender)
+                    </option>
+                </select>
+                <button @click="fetchDevices" :disabled="devicesLoading">
+                    {{ devicesLoading ? 'Lade Fernseher…' : 'Fernseher aktualisieren' }}
+                </button>
+                <button v-if="selectedDeviceId" @click="fetchDeviceInventory" :disabled="inventoryLoading">
+                    {{ inventoryLoading ? 'Lade Sender…' : 'Sender aktualisieren' }}
+                </button>
+            </div>
+            <p v-if="selectedDevice" class="muted">
+                Letzte Synchronisierung: {{ formatTimestamp(selectedDevice.last_sync_at) }} ·
+                Inventar-Version: {{ selectedDevice.inventory_revision || 0 }}
+            </p>
+            <p v-if="inventoryError" class="inventory-error" role="alert">{{ inventoryError }}</p>
+            <p v-else-if="devices.length === 0 && !devicesLoading" style="color: #888;">
+                Noch keine Fernseher gekoppelt.
+            </p>
+            <p v-else-if="selectedDeviceId && inventoryChannels.length === 0 && !inventoryLoading" style="color: #888;">
+                Für diesen Fernseher wurde noch kein Senderinventar synchronisiert.
+            </p>
+            <div v-if="inventoryChannels.length" style="overflow-x: auto;">
+                <table class="inventory-table">
+                    <thead>
+                        <tr><th>TV-Nummer</th><th>TV-Sender</th><th>TV-ID</th><th>XMLTV-Sender zuordnen</th><th>Status</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="channel in inventoryChannels" :key="channel.channel_id" :class="{ unavailable: !channel.available }">
+                            <td>{{ channel.display_number }}</td>
+                            <td>{{ channel.display_name }}</td>
+                            <td>{{ channel.channel_id }}</td>
+                            <td>
+                                <select :value="channel.xmltv_id || ''" @change="saveDeviceMapping(channel, $event.target.value)" :disabled="!channel.available">
+                                    <option value="">Keine Zuordnung</option>
+                                    <option v-for="xmlChannel in xmlChannels" :key="xmlChannel.id" :value="xmlChannel.id">
+                                        {{ xmlChannel.name }} ({{ xmlChannel.id }})
+                                    </option>
+                                </select>
+                            </td>
+                            <td :class="channel.available ? 'status-ok' : 'status-warn'">{{ channel.available ? 'Verfügbar' : 'Nicht mehr empfangen' }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel" style="margin: 20px 0;">
+            <h2 class="section-heading">Gemeinsame Favoritenlisten</h2>
+            <p class="muted">Listen verweisen auf XMLTV-Sender-IDs und können mehreren Fernsehern zugewiesen werden. Der Fernseher löst jeden Eintrag über seine eigene Sender-ID auf.</p>
+            <div class="list-layout">
+                <div class="list-editor">
+                    <label for="channel-list-select">Liste auswählen</label>
+                    <select id="channel-list-select" v-model="selectedListId" @change="selectChannelList">
+                        <option value="">Neue Favoritenliste…</option>
+                        <option v-for="list in channelLists" :key="list.id" :value="list.id">{{ list.name }} ({{ list.entries.length }})</option>
+                    </select>
+                    <label for="channel-list-name">Listenname</label>
+                    <input id="channel-list-name" type="text" v-model="listDraft.name" maxlength="100" placeholder="z. B. Meine Favoriten">
+                    <label for="channel-list-description">Beschreibung</label>
+                    <input id="channel-list-description" type="text" v-model="listDraft.description" maxlength="1000" placeholder="Optional">
+                    <label for="add-list-channel">XMLTV-Sender hinzufügen</label>
+                    <select id="add-list-channel" v-model="newListChannelId">
+                        <option value="">Sender auswählen…</option>
+                        <option v-for="channel in availableListChannels" :key="channel.id" :value="channel.id">{{ channel.name }} ({{ channel.id }})</option>
+                    </select>
+                    <button @click="addListChannel" :disabled="!newListChannelId">Zur Liste hinzufügen</button>
+                    <div class="toolbar">
+                        <button @click="saveChannelList" :disabled="listBusy || !listDraft.name.trim()">{{ listBusy ? 'Speichere…' : 'Liste speichern' }}</button>
+                        <button v-if="selectedListId" class="danger" @click="deleteChannelList" :disabled="listBusy">Liste löschen</button>
+                    </div>
+                    <p v-if="listMessage" :class="listError ? 'inventory-error' : 'status-ok'" role="status">{{ listMessage }}</p>
+                    <label for="assign-list">Liste diesem Fernseher zuweisen</label>
+                    <select id="assign-list" v-model="assignedListId" :disabled="!selectedDeviceId">
+                        <option value="">Keine Liste</option>
+                        <option v-for="list in channelLists" :key="list.id" :value="list.id">{{ list.name }}</option>
+                    </select>
+                    <button @click="assignChannelList" :disabled="!selectedDeviceId || assignmentBusy">
+                        {{ assignmentBusy ? 'Weise zu…' : 'Liste dem Fernseher zuweisen' }}
+                    </button>
+                    <p class="muted">Nicht zugeordnete oder auf einem Fernseher fehlende Sender werden dort nicht in die aktive Favoriten-Kanalliste aufgenommen.</p>
+                </div>
+                <div>
+                    <h3>Reihenfolge der Sender</h3>
+                    <div v-if="!listDraft.entries.length" class="empty-state">Füge XMLTV-Sender hinzu. Mit den Pfeilen legst du ihre Reihenfolge auf dem Fernseher fest.</div>
+                    <div v-for="(entry, index) in listDraft.entries" :key="entry.logical_channel_id" class="list-entry">
+                        <strong>{{ index + 1 }}</strong>
+                        <span>
+                            {{ channelName(entry.logical_channel_id) }}<br>
+                            <small class="muted">{{ entry.logical_channel_id }}</small><br>
+                            <small :class="channelAvailableOnSelectedDevice(entry.logical_channel_id) ? 'status-ok' : 'status-warn'">
+                                {{ channelAvailabilityLabel(entry.logical_channel_id) }}
+                            </small>
+                        </span>
+                        <span class="list-entry-actions">
+                            <button @click="moveListEntry(index, -1)" :disabled="index === 0" aria-label="Nach oben">↑</button>
+                            <button @click="moveListEntry(index, 1)" :disabled="index === listDraft.entries.length - 1" aria-label="Nach unten">↓</button>
+                            <button class="danger" @click="removeListEntry(index)" aria-label="Entfernen">×</button>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </section>
+
+        <section v-if="activeTab === 'xmltv'">
         <div class="grid">
             <div class="panel">
-                <h2>WebGrab+Plus Channels</h2>
-                <p style="color: #aaa;">These channels are pulled from every .xml file in your data directory.</p>
+                <h2 class="section-heading">XMLTV-Sender und Darstellung</h2>
+                <p class="muted">Sender und Programme werden aus allen XMLTV-Dateien im Datenverzeichnis geladen. Hier kannst du bestehende Sendernamen, Logos und Zuordnungen anpassen.</p>
                 
                 <ul class="channel-list">
                     <li v-for="channel in xmlChannels" :key="channel.id" class="channel-item">
@@ -84,50 +241,51 @@
                         </div>
 
                         <div class="mapping-input">
-                            <label style="font-size: 0.8em; color:#aaa">Add Physical Channel # (one listing can feed many channels)</label>
-                            <input type="text" v-model="mappings[channel.id].physical" placeholder="e.g., 6.1" />
+                            <label style="font-size: 0.8em; color:#637184">Globale TV-Sendernummer (eine XMLTV-Zuordnung kann mehrere Sender versorgen)</label>
+                            <input type="text" v-model="mappings[channel.id].physical" placeholder="z. B. 6.1" />
 
-                            <label style="font-size: 0.8em; color:#aaa; margin-top:5px;">Override Name (Optional)</label>
-                            <input type="text" v-model="mappings[channel.id].custom_name" placeholder="Custom display name" />
+                            <label style="font-size: 0.8em; color:#637184; margin-top:5px;">Anzeigename überschreiben (optional)</label>
+                            <input type="text" v-model="mappings[channel.id].custom_name" placeholder="Eigener Sendername" />
 
-                            <label style="font-size: 0.8em; color:#aaa; margin-top:5px;">Override Poster URL (Optional)</label>
-                            <input type="text" v-model="mappings[channel.id].custom_image" placeholder="http://..." />
+                            <label style="font-size: 0.8em; color:#637184; margin-top:5px;">Poster-URL überschreiben (optional)</label>
+                            <input type="text" v-model="mappings[channel.id].custom_image" placeholder="https://…" />
 
-                            <label style="font-size: 0.8em; color:#aaa; margin-top:5px;">Override Guide Source (Optional)</label>
-                            <input type="text" v-model="mappings[channel.id].xml_source" placeholder="Custom XML URL or Path" />
+                            <label style="font-size: 0.8em; color:#637184; margin-top:5px;">XMLTV-Quelle überschreiben (optional)</label>
+                            <input type="text" v-model="mappings[channel.id].xml_source" placeholder="Eigene XML-URL oder Pfad" />
 
-                            <button @click="saveMapping(channel.id)">Add Mapping</button>
+                            <button @click="saveMapping(channel.id)">Globale Zuordnung speichern</button>
                         </div>
                     </li>
                 </ul>
                 <div v-if="xmlChannels.length === 0" style="padding: 20px; text-align: center; color: #888;">
-                    No channels found. Ensure guide.xml exists in the data directory.
+                    Keine Sender gefunden. Prüfe, ob XMLTV-Dateien im Datenverzeichnis liegen.
                 </div>
             </div>
 
             <div class="panel">
-                <h2>Mapped Channels</h2>
-                <p style="color: #aaa;">These are the active physical to XML mappings.</p>
+                <h2 class="section-heading">Bisherige Senderanpassungen</h2>
+                <p class="muted">Globale Zuordnungen für noch nicht gerätespezifisch konfigurierte Installationen.</p>
                 <ul class="channel-list">
                     <li v-for="mapData in sortedMappings" :key="mapData.physical" class="channel-item">
                         <div style="font-size: 1.5em; font-weight: bold; color: #00a4dc; width: 60px;">{{ mapData.physical }}</div>
                         <img v-if="mapData.custom_logo" :src="mapData.custom_logo" class="channel-logo" />
                         <div style="flex-grow: 1;">
-                            mapped to XML ID: <span style="color:#aaa">{{ mapData.xmltv_id }}</span>
-                            <div v-if="mapData.custom_name" style="font-size: 0.8em; color: #ffeb3b;">Name Override: {{ mapData.custom_name }}</div>
-                            <div v-if="mapData.custom_image" style="font-size: 0.8em; color: #4caf50;">Image Override Active</div>
-                            <div v-if="mapData.xml_source" style="font-size: 0.8em; color: #e91e63;">Source Override: {{ mapData.xml_source }}</div>
+                            XMLTV-ID: <span style="color:#637184">{{ mapData.xmltv_id }}</span>
+                            <div v-if="mapData.custom_name" style="font-size: 0.8em;">Eigener Name: {{ mapData.custom_name }}</div>
+                            <div v-if="mapData.custom_image" style="font-size: 0.8em;">Eigenes Bild aktiv</div>
+                            <div v-if="mapData.xml_source" style="font-size: 0.8em;">Eigene Quelle: {{ mapData.xml_source }}</div>
                         </div>
                         <div class="mapping-input" style="margin-left: 10px;">
-                            <label style="font-size: 0.8em; color:#aaa">Channel Logo</label>
+                            <label style="font-size: 0.8em; color:#637184">Senderlogo</label>
                             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" :ref="'logo-' + mapData.physical" style="margin-top: 5px; font-size: 0.8em;" />
-                            <button @click="uploadLogo(mapData.physical)">Upload Logo</button>
-                            <button class="danger" @click="deleteMapping(mapData.physical)">Delete Mapping</button>
+                            <button @click="uploadLogo(mapData.physical)">Logo hochladen</button>
+                            <button class="danger" @click="deleteMapping(mapData.physical)">Zuordnung löschen</button>
                         </div>
                     </li>
                 </ul>
             </div>
         </div>
+        </section>
     </div>
     {% endraw %}
 
@@ -142,12 +300,37 @@
                 pairingCode: '',
                 pairingBusy: false,
                 pairingError: false,
-                pairingMessage: ''
+                pairingMessage: '',
+                devices: [],
+                devicesLoading: false,
+                selectedDeviceId: '',
+                inventoryChannels: [],
+                inventoryLoading: false,
+                inventoryError: '',
+                activeTab: 'devices',
+                channelLists: [],
+                selectedListId: '',
+                listDraft: { name: '', description: '', entries: [] },
+                newListChannelId: '',
+                listBusy: false,
+                listError: false,
+                listMessage: '',
+                assignedListId: '',
+                assignmentBusy: false
             },
             mounted() {
                 this.fetchData();
+                this.fetchDevices();
+                this.fetchChannelLists();
             },
             computed: {
+                selectedDevice() {
+                    return this.devices.find(device => device.id === this.selectedDeviceId) || null;
+                },
+                availableListChannels() {
+                    const existing = new Set(this.listDraft.entries.map(entry => entry.logical_channel_id));
+                    return this.xmlChannels.filter(channel => !existing.has(channel.id));
+                },
                 // Broadcast order: 6.2 < 6.6 < 6.10 < 6.12 < 13.4 < 20.1
                 sortedMappings() {
                     return Object.entries(this.reverseMappings)
@@ -160,6 +343,200 @@
                 }
             },
             methods: {
+                async fetchDevices() {
+                    this.devicesLoading = true;
+                    this.inventoryError = '';
+                    try {
+                        const response = await fetch('/api/v1/devices');
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Could not load devices.');
+                        this.devices = data;
+                        if (!this.devices.some(device => device.id === this.selectedDeviceId)) {
+                            this.selectedDeviceId = this.devices[0] ? this.devices[0].id : '';
+                            this.inventoryChannels = [];
+                        }
+                        this.assignedListId = this.selectedDevice ? (this.selectedDevice.assigned_channel_list || '') : '';
+                        if (this.selectedDeviceId) await this.fetchDeviceInventory();
+                    } catch (error) {
+                        this.inventoryError = error.message || 'Could not load devices.';
+                    } finally {
+                        this.devicesLoading = false;
+                    }
+                },
+                async fetchDeviceInventory() {
+                    if (!this.selectedDeviceId) {
+                        this.inventoryChannels = [];
+                        return;
+                    }
+                    this.inventoryLoading = true;
+                    this.inventoryError = '';
+                    try {
+                        const response = await fetch('/api/v1/devices/' + encodeURIComponent(this.selectedDeviceId) + '/channels');
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Could not load channel inventory.');
+                        this.inventoryChannels = data;
+                    } catch (error) {
+                        this.inventoryChannels = [];
+                        this.inventoryError = error.message || 'Could not load channel inventory.';
+                    } finally {
+                        this.inventoryLoading = false;
+                    }
+                },
+                async onDeviceSelected() {
+                    this.assignedListId = this.selectedDevice ? (this.selectedDevice.assigned_channel_list || '') : '';
+                    await this.fetchDeviceInventory();
+                },
+                async saveDeviceMapping(channel, xmltvId) {
+                    try {
+                        const response = await fetch(
+                            '/api/v1/devices/' + encodeURIComponent(this.selectedDeviceId) +
+                            '/channels/' + encodeURIComponent(channel.channel_id) + '/mapping',
+                            {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ xmltv_id: xmltvId || null })
+                            }
+                        );
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Senderzuordnung konnte nicht gespeichert werden.');
+                        this.$set(channel, 'xmltv_id', data.xmltv_id);
+                    } catch (error) {
+                        this.inventoryError = error.message || 'Senderzuordnung konnte nicht gespeichert werden.';
+                        await this.fetchDeviceInventory();
+                    }
+                },
+                async fetchChannelLists() {
+                    try {
+                        const response = await fetch('/api/v1/channel-lists');
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Favoritenlisten konnten nicht geladen werden.');
+                        this.channelLists = data;
+                    } catch (error) {
+                        this.listError = true;
+                        this.listMessage = error.message || 'Favoritenlisten konnten nicht geladen werden.';
+                    }
+                },
+                selectChannelList() {
+                    const selected = this.channelLists.find(list => list.id === this.selectedListId);
+                    this.listDraft = selected
+                        ? {
+                            name: selected.name,
+                            description: selected.description || '',
+                            entries: selected.entries.map(entry => ({ logical_channel_id: entry.logical_channel_id }))
+                        }
+                        : { name: '', description: '', entries: [] };
+                    this.listMessage = '';
+                },
+                channelName(channelId) {
+                    const channel = this.xmlChannels.find(item => item.id === channelId);
+                    return channel ? channel.name : channelId;
+                },
+                channelAvailableOnSelectedDevice(channelId) {
+                    return Boolean(this.selectedDeviceId && this.inventoryChannels.some(
+                        channel => channel.available && channel.xmltv_id === channelId
+                    ));
+                },
+                channelAvailabilityLabel(channelId) {
+                    if (!this.selectedDeviceId) return 'Fernseher für Verfügbarkeitsprüfung auswählen';
+                    return this.channelAvailableOnSelectedDevice(channelId)
+                        ? 'Auf diesem Fernseher zugeordnet'
+                        : 'Auf diesem Fernseher noch nicht zugeordnet';
+                },
+                addListChannel() {
+                    if (!this.newListChannelId || this.listDraft.entries.some(entry => entry.logical_channel_id === this.newListChannelId)) return;
+                    this.listDraft.entries.push({ logical_channel_id: this.newListChannelId });
+                    this.newListChannelId = '';
+                },
+                moveListEntry(index, direction) {
+                    const target = index + direction;
+                    if (target < 0 || target >= this.listDraft.entries.length) return;
+                    const entries = this.listDraft.entries.slice();
+                    [entries[index], entries[target]] = [entries[target], entries[index]];
+                    this.listDraft.entries = entries;
+                },
+                removeListEntry(index) {
+                    this.listDraft.entries.splice(index, 1);
+                },
+                async saveChannelList() {
+                    this.listBusy = true;
+                    this.listError = false;
+                    this.listMessage = '';
+                    try {
+                        const editing = Boolean(this.selectedListId);
+                        const response = await fetch(
+                            editing ? '/api/v1/channel-lists/' + encodeURIComponent(this.selectedListId) : '/api/v1/channel-lists',
+                            {
+                                method: editing ? 'PUT' : 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    name: this.listDraft.name.trim(),
+                                    description: this.listDraft.description.trim() || null,
+                                    entries: this.listDraft.entries
+                                })
+                            }
+                        );
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Favoritenliste konnte nicht gespeichert werden.');
+                        this.selectedListId = data.id;
+                        this.listMessage = 'Favoritenliste gespeichert.';
+                        await this.fetchChannelLists();
+                    } catch (error) {
+                        this.listError = true;
+                        this.listMessage = error.message || 'Favoritenliste konnte nicht gespeichert werden.';
+                    } finally {
+                        this.listBusy = false;
+                    }
+                },
+                async deleteChannelList() {
+                    if (!this.selectedListId || !confirm('Diese Favoritenliste wirklich löschen?')) return;
+                    this.listBusy = true;
+                    try {
+                        const response = await fetch('/api/v1/channel-lists/' + encodeURIComponent(this.selectedListId), { method: 'DELETE' });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Favoritenliste konnte nicht gelöscht werden.');
+                        if (this.selectedDevice && this.selectedDevice.assigned_channel_list === this.selectedListId) {
+                            this.assignedListId = '';
+                            this.$set(this.selectedDevice, 'assigned_channel_list', null);
+                        }
+                        this.selectedListId = '';
+                        this.listDraft = { name: '', description: '', entries: [] };
+                        this.listMessage = 'Favoritenliste gelöscht.';
+                        await this.fetchChannelLists();
+                    } catch (error) {
+                        this.listError = true;
+                        this.listMessage = error.message || 'Favoritenliste konnte nicht gelöscht werden.';
+                    } finally {
+                        this.listBusy = false;
+                    }
+                },
+                async assignChannelList() {
+                    if (!this.selectedDeviceId) return;
+                    this.assignmentBusy = true;
+                    try {
+                        const response = await fetch(
+                            '/api/v1/devices/' + encodeURIComponent(this.selectedDeviceId) + '/channel-list',
+                            {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ list_id: this.assignedListId || null })
+                            }
+                        );
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Liste konnte dem Fernseher nicht zugewiesen werden.');
+                        const device = this.devices.find(item => item.id === this.selectedDeviceId);
+                        if (device) this.$set(device, 'assigned_channel_list', data.list_id);
+                        this.listError = false;
+                        this.listMessage = 'Liste wurde dem Fernseher zugewiesen.';
+                    } catch (error) {
+                        this.listError = true;
+                        this.listMessage = error.message || 'Liste konnte dem Fernseher nicht zugewiesen werden.';
+                    } finally {
+                        this.assignmentBusy = false;
+                    }
+                },
+                formatTimestamp(value) {
+                    return value ? new Date(value * 1000).toLocaleString() : 'Noch nie';
+                },
                 async logout() {
                     await fetch('/api/v1/admin/logout', { method: 'POST' });
                     location.replace('/');
@@ -167,7 +544,7 @@
                 async reviewPairing(approve) {
                     if (!/^[0-9]{6}$/.test(this.pairingCode)) {
                         this.pairingError = true;
-                        this.pairingMessage = 'Enter the six-digit code displayed on the TV.';
+                        this.pairingMessage = 'Bitte gib den sechsstelligen Code vom Fernseher ein.';
                         return;
                     }
                     this.pairingBusy = true;
@@ -184,8 +561,8 @@
                             throw new Error(data.detail || 'The pairing request could not be processed.');
                         }
                         this.pairingMessage = approve
-                            ? 'Device approved. The TV will complete pairing automatically.'
-                            : 'Pairing request rejected.';
+                            ? 'Fernseher freigegeben. Die Kopplung wird automatisch abgeschlossen.'
+                            : 'Kopplungsanfrage abgelehnt.';
                         this.pairingCode = '';
                     } catch (error) {
                         this.pairingError = true;
@@ -253,11 +630,11 @@
                     });
                 },
                 deleteMapping(physical) {
-                    if (!confirm("Delete the mapping for channel " + physical + "? The channel stays on the TV; it just loses its guide data.")) return;
+                    if (!confirm("Die Zuordnung für Sender " + physical + " löschen? Der Sender bleibt auf dem Fernseher, verliert aber seine Programmdaten.")) return;
                     fetch('/api/mappings/' + encodeURIComponent(physical), { method: 'DELETE' })
                         .then(res => res.json().then(data => ({ ok: res.ok, data })))
                         .then(({ ok, data }) => {
-                            if (!ok) { alert("Delete failed: " + (data.detail || "unknown error")); return; }
+                            if (!ok) { alert("Löschen fehlgeschlagen: " + (data.detail || "Unbekannter Fehler")); return; }
                             this.fetchData();
                         });
                 },

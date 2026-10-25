@@ -58,7 +58,7 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 - All artwork (TMDB posters/backdrops, remote channel logos) is cached and served by the server, so the TV loads images over the LAN and never needs internet access
 - Resumes on the channel you were last watching
 - Channel rescan integration: launch the tuner's scan wizard from Settings; the channel list reloads automatically when you return
-- Server web UI for mapping physical channels to XMLTV IDs, uploading channel logos, and overriding names/posters
+- Server web UI with separate **Fernseher** and **XMLTV & Sender** areas, device-specific XMLTV matching, shared ordered channel lists, channel logos, and name/poster overrides
 
 ## Requirements
 
@@ -112,6 +112,8 @@ The versioned API used by this flow is:
 `GET /api/v1/devices/me` checks a device credential. Administrators can list devices at `GET /api/v1/devices` and revoke a credential with `POST /api/v1/devices/{device_id}/revoke`. Admin and pairing attempts are rate-limited. Enter the server URL manually in TV Settings; automatic server discovery is not implemented.
 
 After pairing, the TV uploads its physical `TvContract` channel inventory to `PUT /api/v1/devices/me/channels` using its device credential. The server verifies a deterministic SHA-256 hash, records changed inventories as revisions, and marks channels missing from a later scan as unavailable instead of deleting their history. The app syncs on startup, after reloading channels, after pairing, and on request from **Settings → Sync Channel Inventory**. Administrators can inspect current and previously scanned channels at `GET /api/v1/devices/{device_id}/channels`. Use HTTPS with a trusted certificate when possible; HTTP should only be used on a trusted local network.
+
+In the web interface, use **Fernseher** to match each TV channel to an XMLTV channel and to create shared, ordered favorites lists. Lists use XMLTV IDs as logical identifiers; each paired TV resolves those IDs to its own Android channel IDs. Assign a list to a TV to make the app use the available entries in that order. Unassigned lists do not change the app's existing channel lineup. Use **XMLTV & Sender** to maintain legacy global mappings and their display/logo overrides.
 
 Example zap2xml companion container (6-hour refresh, 3 days of data):
 

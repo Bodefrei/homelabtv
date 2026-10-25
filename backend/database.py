@@ -93,6 +93,7 @@ async def init_db():
             transport_stream_id INTEGER,
             service_id INTEGER,
             internal_provider_id TEXT,
+            xmltv_id TEXT,
             first_seen_at INTEGER NOT NULL,
             last_seen_at INTEGER NOT NULL,
             removed_at INTEGER,
@@ -233,6 +234,11 @@ async def init_db():
         await db.execute(
             "ALTER TABLE devices ADD COLUMN inventory_revision INTEGER NOT NULL DEFAULT 0"
         )
+
+    cursor = await db.execute("PRAGMA table_info(device_channels)")
+    channel_columns = {row[1] for row in await cursor.fetchall()}
+    if "xmltv_id" not in channel_columns:
+        await db.execute("ALTER TABLE device_channels ADD COLUMN xmltv_id TEXT")
 
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_pairing_sessions_device_status "

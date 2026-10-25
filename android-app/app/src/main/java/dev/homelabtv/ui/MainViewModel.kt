@@ -15,6 +15,7 @@ import dev.homelabtv.data.ChannelGuide
 import dev.homelabtv.data.ChannelRepository
 import dev.homelabtv.data.DeviceChannelInventoryEntry
 import dev.homelabtv.data.DeviceChannelInventoryRequest
+import dev.homelabtv.data.DeviceChannelListResponse
 import dev.homelabtv.data.DeviceCredentialStore
 import dev.homelabtv.data.GuideRepository
 import dev.homelabtv.data.GuideState
@@ -57,6 +58,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var physicalChannels by mutableStateOf(listOf<PhysicalChannel>())
         private set
 
+    private var scannedChannels = emptyList<PhysicalChannel>()
+    private var favoriteChannelIds: List<Long>? = null
+
     var currentChannelIndex by mutableIntStateOf(0)
         private set
 
@@ -82,6 +86,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var inventorySyncStatus by mutableStateOf("")
+        private set
+
+    var channelListStatus by mutableStateOf("")
         private set
 
     var inventorySyncInProgress by mutableStateOf(false)
@@ -166,12 +173,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             pairingStatus = "Gespeicherte Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
         }
-        physicalChannels = channelRepository.getPhysicalChannels()
-        currentChannelIndex = restoreLastChannelIndex()
+        scannedChannels = channelRepository.getPhysicalChannels()
+        applyFavoriteChannelOrder()
         viewModelScope.launch {
             guideRepository.loadCache()
             while (true) {
-                guideRepository.refresh(serverUrl)
+                refreshGuideAndChannelList()
                 delay(REFRESH_INTERVAL_MS)
             }
         }
@@ -187,13 +194,72 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshNow() {
-        viewModelScope.launch { guideRepository.refresh(serverUrl) }
+        viewModelScope.launch { refreshGuideAndChannelList() }
+    }
+
+    private suspend fun refreshGuideAndChannelList() {
+        val credential =
+            try {
+                deviceCredentialStore.credential()
+            } catch (e: Exception) {
+                channelListStatus = "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
+                guideRepository.refresh(serverUrl)
+                return
+            }
+        guideRepository.refresh(serverUrl, credential)
+        if (credential == null) {
+            favoriteChannelIds = null
+            applyFavoriteChannelOrder()
+            channelListStatus = ""
+            return
+        }
+        refreshDeviceChannelList(credential)
+    }
+
+    private suspend fun refreshDeviceChannelList(credential: String) {
+        try {
+            val response =
+                RetrofitClient.getInstance(serverUrl)
+                    .getCurrentDeviceChannelList("Bearer $credential")
+            applyDeviceChannelList(response)
+        } catch (e: Exception) {
+            channelListStatus =
+                "Favoritenliste konnte nicht synchronisiert werden: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    private fun applyDeviceChannelList(response: DeviceChannelListResponse) {
+        favoriteChannelIds =
+            if (response.active) {
+                response.channels.mapNotNull { it.channel_id }.distinct()
+            } else {
+                null
+            }
+        applyFavoriteChannelOrder()
+        channelListStatus =
+            if (response.active) {
+                "Favoritenliste „${response.name ?: "Unbenannt"}“ geladen: ${physicalChannels.size} von ${response.channels.size} Sendern verfügbar."
+            } else {
+                "Keine Favoritenliste zugewiesen; alle empfangbaren Sender werden verwendet."
+            }
+    }
+
+    private fun applyFavoriteChannelOrder() {
+        val currentNumber = currentChannel?.displayNumber
+        physicalChannels =
+            favoriteChannelIds?.let { ids ->
+                ids.mapNotNull { id -> scannedChannels.firstOrNull { it.id == id } }
+            } ?: scannedChannels
+        currentChannelIndex =
+            currentNumber?.let { indexOfChannelNumber(it) }
+                ?: restoreLastChannelIndex()
     }
 
     /** Re-query TvContract, e.g. after READ_TV_LISTINGS is granted or a channel rescan. */
     fun reloadChannels(forceInventoryUpload: Boolean = false) {
         val stayOn = currentChannel?.displayNumber
-        physicalChannels = channelRepository.getPhysicalChannels()
+        scannedChannels = channelRepository.getPhysicalChannels()
+        applyFavoriteChannelOrder()
         // Keep the viewer on the same channel number across a rescan when it still
         // exists; otherwise fall back to whatever we last persisted, then index 0.
         currentChannelIndex =
@@ -212,7 +278,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
                 return
             } ?: return
-        val channels = physicalChannels.map { it.toInventoryEntry() }
+        val channels = scannedChannels.map { it.toInventoryEntry() }
         val inventoryHash = calculateDeviceChannelInventoryHash(channels)
         inventorySyncInProgress = true
         viewModelScope.launch {
@@ -236,12 +302,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 inventorySyncStatus =
                     "Kanalinventar synchronisiert: ${response.channel_count} Sender (Revision ${response.revision})."
+                guideRepository.refresh(baseUrl, credential)
+                refreshDeviceChannelList(credential)
             } catch (e: Exception) {
                 inventorySyncStatus =
                     "Kanalinventar-Synchronisierung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 inventorySyncInProgress = false
-                if (calculateDeviceChannelInventoryHash(physicalChannels.map { it.toInventoryEntry() }) != inventoryHash) {
+                if (calculateDeviceChannelInventoryHash(scannedChannels.map { it.toInventoryEntry() }) != inventoryHash) {
                     syncChannelInventory()
                 }
             }
