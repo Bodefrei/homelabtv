@@ -254,7 +254,10 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
             zapCounter++
         }
     }
-    val currentGuide = guideState.channels.forChannel(currentChannel)
+    val currentGuide =
+        guideState.channels.forChannel(currentChannel)?.let { guide ->
+            currentChannel?.serverListName?.let { guide.copy(name = it) } ?: guide
+        }
     val guideChannels =
         remember(viewModel.physicalChannels, guideState.channels, viewModel.channelListMode) {
             mergeGuide(
@@ -435,7 +438,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     isServerChannelListSelected = viewModel.channelListMode == ChannelListMode.SERVER,
                     tunerInfo =
                         currentChannel?.let {
-                            "${it.displayName} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"
+                            "${it.nameForDisplay} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"
                         } ?: "No tuner detected",
                     serverDiscoveryStatus = viewModel.serverDiscoveryStatus,
                     discoveredServers = viewModel.discoveredServers,

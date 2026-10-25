@@ -20,9 +20,13 @@ data class PhysicalChannel(
     val serviceId: Long? = null,
     val internalProviderId: String? = null,
     val serverListNumber: String? = null,
+    val serverListName: String? = null,
 ) {
     val numberForDisplay: String
         get() = serverListNumber ?: displayNumber
+
+    val nameForDisplay: String
+        get() = serverListName ?: displayName
 }
 
 class ChannelRepository(private val context: Context) {

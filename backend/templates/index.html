@@ -254,6 +254,15 @@
                         <span>
                             {{ xmlChannelById[row.entry.logical_channel_id] ? xmlChannelById[row.entry.logical_channel_id].name : row.entry.logical_channel_id }}<br>
                             <small class="muted">{{ row.entry.logical_channel_id }}</small><br>
+                            <label style="display:block; margin-top:8px; font-size:.85em;">
+                                Alternativer Name auf diesem Fernseher
+                                <input
+                                    type="text"
+                                    v-model="row.entry.custom_name"
+                                    maxlength="512"
+                                    placeholder="XMLTV-Sendername verwenden"
+                                >
+                            </label>
                             <small :class="selectedDeviceXmltvIds.has(row.entry.logical_channel_id) ? 'status-ok' : 'status-warn'">
                                 {{ selectedDeviceXmltvIds.has(row.entry.logical_channel_id) ? 'Auf diesem Fernseher zugeordnet' : 'Auf diesem Fernseher noch nicht zugeordnet' }}
                             </small>
@@ -646,7 +655,10 @@
                         this.listDraft = {
                             name: data.name,
                             description: data.description || '',
-                            entries: data.entries.map(entry => ({ logical_channel_id: entry.logical_channel_id }))
+                            entries: data.entries.map(entry => ({
+                                logical_channel_id: entry.logical_channel_id,
+                                custom_name: entry.custom_name || ''
+                            }))
                         };
                     } catch (error) {
                         this.listError = true;
@@ -655,7 +667,7 @@
                 },
                 addListChannel(channelId) {
                     if (this.listDraft.entries.some(entry => entry.logical_channel_id === channelId)) return;
-                    this.listDraft.entries.push({ logical_channel_id: channelId });
+                    this.listDraft.entries.push({ logical_channel_id: channelId, custom_name: '' });
                     this.listChannelSearch = '';
                     this.listEntryPage = this.listPageCount - 1;
                 },

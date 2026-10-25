@@ -75,6 +75,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var scannedChannels = emptyList<PhysicalChannel>()
     private var favoriteChannelIds: List<Long>? = null
     private var favoriteChannelNumbers: Map<Long, String> = emptyMap()
+    private var favoriteChannelNames: Map<Long, String> = emptyMap()
 
     var currentChannelIndex by mutableIntStateOf(0)
         private set
@@ -396,6 +397,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 emptyMap()
             }
+        favoriteChannelNames =
+            if (response.active) {
+                response.channels.mapNotNull { channel ->
+                    channel.channel_id?.let { id ->
+                        channel.custom_name?.takeIf { it.isNotBlank() }?.let { id to it }
+                    }
+                }.toMap()
+            } else {
+                emptyMap()
+            }
         applyFavoriteChannelOrder()
         val status =
             if (channelListMode == ChannelListMode.TV) {
@@ -414,7 +425,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (channelListMode == ChannelListMode.SERVER && favoriteChannelIds != null) {
                 favoriteChannelIds.orEmpty().mapNotNull { id ->
                     scannedChannels.firstOrNull { it.id == id }
-                        ?.copy(serverListNumber = favoriteChannelNumbers[id])
+                        ?.copy(
+                            serverListNumber = favoriteChannelNumbers[id],
+                            serverListName = favoriteChannelNames[id],
+                        )
                 }
             } else {
                 scannedChannels

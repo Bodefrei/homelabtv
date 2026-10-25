@@ -993,6 +993,7 @@ async def get_current_device_channel_list(request: Request, list_id: str | None 
             {
                 "logical_channel_id": row[0],
                 "display_name": row[2] or row[1],
+                "custom_name": row[2],
                 "list_number": index,
                 "channel_id": row[3],
                 "display_number": row[4],

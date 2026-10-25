@@ -74,6 +74,7 @@ data class DeviceChannelInventoryResponse(
 data class DeviceChannelListChannel(
     val logical_channel_id: String,
     val display_name: String?,
+    val custom_name: String? = null,
     val list_number: Int? = null,
     val channel_id: Long?,
     val display_number: String?,

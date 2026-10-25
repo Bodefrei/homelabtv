@@ -449,7 +449,7 @@ class PairingApiTests(unittest.TestCase):
                 "name": "Abend",
                 "description": "Gemeinsame Favoriten",
                 "entries": [
-                    {"logical_channel_id": "sports.xml"},
+                    {"logical_channel_id": "sports.xml", "custom_name": "Sports Plus"},
                     {"logical_channel_id": "news.xml"},
                     {"logical_channel_id": "missing.xml"},
                 ],
@@ -472,6 +472,7 @@ class PairingApiTests(unittest.TestCase):
             [entry["logical_channel_id"] for entry in details.json()["entries"]],
             ["sports.xml", "news.xml", "missing.xml"],
         )
+        self.assertEqual(details.json()["entries"][0]["custom_name"], "Sports Plus")
         second_list = self.client.post(
             "/api/v1/channel-lists",
             headers=admin,
@@ -501,6 +502,8 @@ class PairingApiTests(unittest.TestCase):
             [item["list_number"] for item in resolved_one.json()["channels"]],
             [1, 2, 3],
         )
+        self.assertEqual(resolved_one.json()["channels"][0]["custom_name"], "Sports Plus")
+        self.assertEqual(resolved_one.json()["channels"][0]["display_name"], "Sports Plus")
         self.assertFalse(resolved_one.json()["channels"][-1]["available"])
         self.assertEqual(
             [item["channel_id"] for item in resolved_two.json()["channels"]],

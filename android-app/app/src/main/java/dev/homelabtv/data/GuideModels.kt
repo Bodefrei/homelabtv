@@ -117,7 +117,9 @@ fun mergeGuide(
             ChannelGuide(
                 physical_channel = normalizeChannelNumber(channel.displayNumber),
                 xmltv_id = match?.xmltv_id,
-                name = match?.name ?: channel.displayName,
+                name = channel.nameForDisplay.takeIf { channel.serverListName != null }
+                    ?: match?.name
+                    ?: channel.displayName,
                 logo_url = match?.logo_url,
                 programs = match?.safePrograms ?: emptyList(),
                 display_number = channel.numberForDisplay,
