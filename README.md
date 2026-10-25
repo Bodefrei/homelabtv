@@ -59,6 +59,7 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 - Resumes on the channel you were last watching
 - Channel rescan integration: launch the tuner's scan wizard from Settings; the channel list reloads automatically when you return
 - Server web UI with separate **Fernseher** and **XMLTV & Sender** areas, device-specific XMLTV matching, shared ordered channel lists, channel logos, and name/poster overrides
+- In the **Fernseher** area, paired app versions are labeled DEV/PROD; obsolete devices can be permanently deleted along with their credentials, channel inventory, and favorites-list assignment
 
 ## Requirements
 
@@ -173,6 +174,9 @@ production logo and banner. Configure `HOMELABTV_KEYSTORE`,
 `HOMELABTV_KEYSTORE_PASSWORD`, `HOMELABTV_KEY_ALIAS`, and
 `HOMELABTV_KEY_PASSWORD` to sign production builds with your release key;
 without them, Gradle uses its configured fallback signing key.
+The Windows scripts detect Java and the Android SDK in common installation
+locations. If either is installed elsewhere, set `JAVA_HOME` or `ANDROID_HOME`
+before running the script.
 
 On macOS or Linux, build the debug variant directly:
 

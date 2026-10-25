@@ -203,6 +203,9 @@ class PairingApiTests(unittest.TestCase):
         self.assertIn('v-for="channel in filteredAvailableListChannels"', page.text)
         self.assertIn('v-for="mapData in pagedMappings"', page.text)
         self.assertIn("saveExistingMapping(mapData.physical)", page.text)
+        self.assertIn("deviceLabel(device)", page.text)
+        self.assertIn("async deleteDevice()", page.text)
+        self.assertIn("Fernseher löschen", page.text)
         self.assertIn("Anzeigename", page.text)
         self.assertNotIn('v-for="channel in xmlChannels"', page.text)
         self.assertEqual(self.client.get("/api/mappings").status_code, 200)
@@ -273,6 +276,72 @@ class PairingApiTests(unittest.TestCase):
             headers={"Authorization": f"Bearer {credential}"},
         )
         self.assertEqual(identity.status_code, 401)
+
+    def test_admin_can_delete_device_and_its_device_data(self):
+        device_id, _ = self.paired_device()
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            db.execute(
+                "INSERT INTO device_channels (device_id, channel_id, display_number, display_name, first_seen_at, last_seen_at) "
+                "VALUES (?, 1, '1.1', 'Channel', 1, 1)",
+                (device_id,),
+            )
+            db.execute(
+                "INSERT INTO device_inventory_revisions "
+                "(device_id, revision, inventory_hash, channel_count, changes_json, inventory_json, synced_at) "
+                "VALUES (?, 1, 'hash', 1, '[]', '[]', 1)",
+                (device_id,),
+            )
+            db.execute(
+                "INSERT INTO channel_lists (id, name, is_system, is_shared, created_at, updated_at) "
+                "VALUES ('list-1', 'Favorites', 0, 0, 1, 1)"
+            )
+            db.execute(
+                "INSERT INTO device_list_assignments (id, device_id, list_id, is_active, assigned_at) "
+                "VALUES ('assignment-1', ?, 'list-1', 1, 1)",
+                (device_id,),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        unauthorized = self.client.delete(f"/api/v1/devices/{device_id}")
+        self.assertEqual(unauthorized.status_code, 401)
+
+        deleted = self.client.delete(
+            f"/api/v1/devices/{device_id}",
+            headers=self.admin_headers(),
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json(), {"device_id": device_id, "deleted": True})
+        self.assertEqual(self.client.get("/api/v1/devices", headers=self.admin_headers()).json(), [])
+
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            for table in (
+                "device_channels",
+                "device_inventory_revisions",
+                "device_credentials",
+                "pairing_sessions",
+                "device_list_assignments",
+            ):
+                count = db.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE device_id = ?",
+                    (device_id,),
+                ).fetchone()[0]
+                self.assertEqual(count, 0, table)
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM channel_lists WHERE id = 'list-1'").fetchone()[0],
+                1,
+            )
+        finally:
+            db.close()
+
+        missing = self.client.delete(
+            f"/api/v1/devices/{device_id}",
+            headers=self.admin_headers(),
+        )
+        self.assertEqual(missing.status_code, 404)
 
     def paired_device(self, device_id="test-tv-0001"):
         payload = self.pair_payload(device_id=device_id)

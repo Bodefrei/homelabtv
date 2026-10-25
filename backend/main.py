@@ -1098,6 +1098,30 @@ async def get_device(device_id: str, request: Request):
     return _device_record(row)
 
 
+@app.delete("/api/v1/devices/{device_id}")
+async def delete_device(device_id: str, request: Request):
+    await require_admin(request)
+    db = await get_db_connection()
+    cursor = await db.execute("SELECT 1 FROM devices WHERE id = ?", (device_id,))
+    if await cursor.fetchone() is None:
+        await db.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    await db.execute("BEGIN IMMEDIATE")
+    for table in (
+        "device_channels",
+        "device_inventory_revisions",
+        "device_credentials",
+        "pairing_sessions",
+        "device_list_assignments",
+    ):
+        await db.execute(f"DELETE FROM {table} WHERE device_id = ?", (device_id,))
+    await db.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+    await db.commit()
+    await db.close()
+    return {"device_id": device_id, "deleted": True}
+
+
 @app.post("/api/v1/devices/pair", response_model=PairingStartResponse)
 async def create_pairing_session(payload: PairingStartRequest, request: Request):
     db = await get_db_connection()

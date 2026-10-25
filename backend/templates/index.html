@@ -146,7 +146,7 @@
                 <select id="inventory-device" v-model="selectedDeviceId" @change="onDeviceSelected" :disabled="devicesLoading || devices.length === 0">
                     <option value="" disabled>Fernseher auswählen</option>
                     <option v-for="device in devices" :key="device.id" :value="device.id">
-                        {{ device.friendly_name }} — {{ device.pairing_status }} ({{ device.available_channels || 0 }} Sender)
+                        {{ deviceLabel(device) }} — {{ device.pairing_status }} ({{ device.available_channels || 0 }} Sender)
                     </option>
                 </select>
                 <button @click="fetchDevices" :disabled="devicesLoading">
@@ -154,6 +154,9 @@
                 </button>
                 <button v-if="selectedDeviceId" @click="fetchDeviceInventory" :disabled="inventoryLoading">
                     {{ inventoryLoading ? 'Lade Sender…' : 'Sender aktualisieren' }}
+                </button>
+                <button v-if="selectedDeviceId" class="danger" @click="deleteDevice" :disabled="devicesLoading">
+                    Fernseher löschen
                 </button>
             </div>
             <p v-if="selectedDevice" class="muted">
@@ -227,9 +230,9 @@
                     <label for="assignment-device">Ziel-Fernseher für diese Favoritenliste</label>
                     <select id="assignment-device" v-model="assignmentDeviceId" @change="onAssignmentDeviceSelected" :disabled="devices.length === 0">
                         <option value="" disabled>Fernseher auswählen</option>
-                        <option v-for="device in devices" :key="device.id" :value="device.id">{{ device.friendly_name }}</option>
+                        <option v-for="device in devices" :key="device.id" :value="device.id">{{ deviceLabel(device) }}</option>
                     </select>
-                    <p class="muted">Ausgewählter Ziel-Fernseher: <strong>{{ assignmentDevice ? assignmentDevice.friendly_name : 'Keiner ausgewählt' }}</strong></p>
+                    <p class="muted">Ausgewählter Ziel-Fernseher: <strong>{{ assignmentDevice ? deviceLabel(assignmentDevice) : 'Keiner ausgewählt' }}</strong></p>
                     <label for="assign-list">Favoritenliste für diesen Fernseher</label>
                     <select id="assign-list" v-model="assignedListId" :disabled="!assignmentDeviceId">
                         <option value="">Keine Liste</option>
@@ -528,6 +531,37 @@
                 }
             },
             methods: {
+                deviceLabel(device) {
+                    const flavor = String(device.app_version || '').toLowerCase().endsWith('-dev') ? 'DEV' : 'PROD';
+                    return `${device.friendly_name} [${flavor}] · ${device.app_version || 'Version unbekannt'}`;
+                },
+                async deleteDevice() {
+                    const device = this.selectedDevice;
+                    if (!device) return;
+                    const label = this.deviceLabel(device);
+                    if (!confirm(
+                        `„${label}“ wirklich endgültig löschen? Zugangsdaten, Senderinventar und Zuordnung zu Favoritenlisten werden entfernt. Die Favoritenlisten selbst bleiben erhalten.`
+                    )) return;
+                    this.devicesLoading = true;
+                    this.inventoryError = '';
+                    try {
+                        const response = await fetch(
+                            '/api/v1/devices/' + encodeURIComponent(device.id),
+                            { method: 'DELETE' }
+                        );
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Fernseher konnte nicht gelöscht werden.');
+                        this.selectedDeviceId = '';
+                        this.assignmentDeviceId = '';
+                        this.inventoryChannels = [];
+                        this.assignmentInventoryChannels = [];
+                        await this.fetchDevices();
+                    } catch (error) {
+                        this.inventoryError = error.message || 'Fernseher konnte nicht gelöscht werden.';
+                    } finally {
+                        this.devicesLoading = false;
+                    }
+                },
                 async fetchDevices() {
                     this.devicesLoading = true;
                     this.inventoryError = '';

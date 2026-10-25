@@ -44,6 +44,10 @@ import java.net.URISyntaxException
 
 data class Reminder(val channel: String, val title: String, val startMillis: Long)
 data class DiscoveredServer(val name: String, val host: String)
+private data class CachedDeviceChannelList(
+    val serverHost: String,
+    val response: DeviceChannelListResponse,
+)
 
 enum class NumberEntryMode {
     /** Learn from the scanned lineup: complete a prefix as soon as it's unambiguous. */
@@ -216,7 +220,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             pairingStatus = "Gespeicherte Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
         }
         scannedChannels = channelRepository.getPhysicalChannels()
-        applyFavoriteChannelOrder()
+        val cachedChannelList =
+            if (channelListMode == ChannelListMode.SERVER) loadCachedDeviceChannelList()
+            else null
+        if (cachedChannelList != null) {
+            applyDeviceChannelList(cachedChannelList)
+        } else {
+            applyFavoriteChannelOrder()
+        }
         viewModelScope.launch {
             guideRepository.loadCache()
             while (true) {
@@ -344,6 +355,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 prefs.edit().remove("selected_server_channel_list_id").apply()
             }
             val response = api.getCurrentDeviceChannelList(authorization, selectedListId)
+            if (response.active && response.list_id != null) {
+                prefs.edit()
+                    .putString(
+                        cachedDeviceChannelListKey(response.list_id),
+                        gson.toJson(CachedDeviceChannelList(serverUrl, response)),
+                    )
+                    .apply()
+            }
             if (listOptionsError != null) {
                 selectedServerChannelListId = response.list_id
                 val editor = prefs.edit()
@@ -392,6 +411,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             emptyList()
         }
+
+    private fun loadCachedDeviceChannelList(): DeviceChannelListResponse? {
+        val listId = selectedServerChannelListId ?: return null
+        return try {
+            val json = prefs.getString(cachedDeviceChannelListKey(listId), null) ?: return null
+            val cached =
+                gson.fromJson<CachedDeviceChannelList>(
+                    json,
+                    object : TypeToken<CachedDeviceChannelList>() {}.type,
+                ) ?: return null
+            cached.response.takeIf {
+                cached.serverHost == serverUrl && it.active && it.list_id == listId
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun cachedDeviceChannelListKey(listId: String) = "server_channel_list_cache:$listId"
 
     private fun applyDeviceChannelList(response: DeviceChannelListResponse, warning: String? = null) {
         favoriteChannelIds =
