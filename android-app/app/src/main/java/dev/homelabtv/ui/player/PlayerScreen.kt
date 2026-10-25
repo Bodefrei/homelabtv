@@ -1,5 +1,6 @@
 package dev.homelabtv.ui.player
 
+import android.media.tv.TvContract
 import android.media.tv.TvTrackInfo
 import android.media.tv.TvView
 import android.view.ViewGroup
@@ -33,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -226,6 +228,9 @@ fun ZapperOverlay(
         val now = System.currentTimeMillis()
         val current = guide?.programAt(now)
         val next = guide?.programAfter(now)
+        var logoSource by remember(channel?.id, guide?.logo_url) {
+            mutableStateOf(if (guide?.logo_url.isNullOrBlank()) 1 else 0)
+        }
         Box(
             Modifier.fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))
@@ -236,11 +241,21 @@ fun ZapperOverlay(
                     Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceColor),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (guide?.logo_url != null) {
+                    val logoModel =
+                        when (logoSource) {
+                            0 -> guide?.logo_url
+                            1 -> channel?.let { TvContract.buildChannelLogoUri(it.id) }
+                            else -> null
+                        }
+                    if (logoModel != null) {
                         AsyncImage(
-                            model = guide.logo_url,
+                            model = logoModel,
                             contentDescription = null,
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize().padding(8.dp),
+                            onError = {
+                                logoSource = if (logoSource == 0 && channel != null) 1 else 2
+                            },
                         )
                     } else {
                         Text(

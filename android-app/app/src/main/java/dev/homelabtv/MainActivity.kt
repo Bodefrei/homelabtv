@@ -399,6 +399,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                 GuideScreen(
                     channels = guideChannels,
                     isOnline = guideState.isOnline,
+                    physicalChannels = viewModel.physicalChannels,
                     initialChannelNumber = currentChannel?.displayNumber,
                     onTune = { guide ->
                         if (viewModel.tuneTo(guide)) {

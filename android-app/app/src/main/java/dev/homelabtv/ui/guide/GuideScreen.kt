@@ -1,5 +1,6 @@
 package dev.homelabtv.ui.guide
 
+import android.media.tv.TvContract
 import android.util.Log
 import android.view.KeyEvent
 import androidx.compose.foundation.ScrollState
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import dev.homelabtv.data.ChannelGuide
 import dev.homelabtv.data.GuideSlot
+import dev.homelabtv.data.PhysicalChannel
 import dev.homelabtv.data.Program
 import dev.homelabtv.data.XmltvTime
 import dev.homelabtv.data.buildSlots
@@ -133,6 +135,7 @@ fun GuideScreen(
     channels: List<ChannelGuide>,
     isOnline: Boolean,
     onTune: (ChannelGuide) -> Unit,
+    physicalChannels: List<PhysicalChannel> = emptyList(),
     modifier: Modifier = Modifier,
     initialChannelNumber: String? = null,
     reminderKeys: Set<String> = emptySet(),
@@ -276,6 +279,11 @@ fun GuideScreen(
                             }
                             GuideRow(
                                 channel = channel,
+                                physicalChannel =
+                                    physicalChannels.firstOrNull {
+                                        normalizeChannelNumber(it.displayNumber) ==
+                                            normalizeChannelNumber(channel.physical_channel)
+                                    },
                                 slots = rowSlots,
                                 requesters = rowRequestersForSlots,
                                 windowStart = windowStart,
@@ -496,6 +504,7 @@ private fun Modifier.verticalGuideNav(onMoveVertical: (Int) -> Unit): Modifier =
 @Composable
 private fun GuideRow(
     channel: ChannelGuide,
+    physicalChannel: PhysicalChannel?,
     slots: List<GuideSlot>,
     requesters: List<FocusRequester>,
     windowStart: Long,
@@ -508,19 +517,45 @@ private fun GuideRow(
     reminderKeys: Set<String>,
     onMoveVertical: (Int) -> Unit,
 ) {
+    var logoSource by remember(channel.physical_channel, channel.logo_url) {
+        mutableStateOf(if (channel.logo_url.isNullOrBlank()) 1 else 0)
+    }
     Row(Modifier.fillMaxWidth().height(ROW_HEIGHT)) {
         Row(
             Modifier.width(CHANNEL_COL_WIDTH).fillMaxHeight().padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (channel.logo_url != null) {
-                AsyncImage(
-                    model = channel.logo_url,
-                    contentDescription = null,
-                    modifier = Modifier.size(34.dp),
-                )
-                Spacer(Modifier.width(8.dp))
+            val logoModel =
+                when (logoSource) {
+                    0 -> channel.logo_url
+                    1 -> physicalChannel?.let { TvContract.buildChannelLogoUri(it.id) }
+                    else -> null
+                }
+            Box(
+                Modifier.size(34.dp).clip(RoundedCornerShape(4.dp)).background(SurfaceLight),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (logoModel != null) {
+                    AsyncImage(
+                        model = logoModel,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize().padding(3.dp),
+                        onError = {
+                            logoSource = if (logoSource == 0 && physicalChannel != null) 1 else 2
+                        },
+                    )
+                } else {
+                    Text(
+                        channel.display_number ?: channel.physical_channel ?: "",
+                        color = TextSecondary,
+                        fontSize = 9.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
+                    )
+                }
             }
+            Spacer(Modifier.width(8.dp))
             Column {
                 Text(
                     channel.display_number ?: channel.physical_channel ?: "",
