@@ -126,7 +126,7 @@ class GuideRepository(context: Context) {
             val request = Request.Builder().url(url).build()
             imageClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "Could not download channel logo: HTTP ${response.code}")
+                    Log.w(TAG, "Could not download channel logo from $url: HTTP ${response.code}")
                     return null
                 }
                 val body = response.body ?: return null

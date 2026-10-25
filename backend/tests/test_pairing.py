@@ -637,6 +637,46 @@ class PairingApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()[0]["icon"].endswith("/static/imgcache/news.png"))
 
+    def test_failed_xmltv_logo_cache_does_not_return_remote_url(self):
+        async def run():
+            with patch("main._cache_remote_image", new=AsyncMock(return_value=None)):
+                return await main._cache_xmltv_channel_logos([{
+                    "id": "news.channel",
+                    "icon": "https://logos.example/news.png",
+                }])
+
+        channels = asyncio.run(run())
+
+        self.assertIsNone(channels[0]["icon"])
+
+    def test_guide_omits_logo_when_server_cannot_cache_it(self):
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            db.execute(
+                "INSERT INTO channel_mappings (physical_channel, xmltv_id) VALUES (?, ?)",
+                ("7.1", "news-channel"),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        channels = [{
+            "id": "news-channel",
+            "name": "News",
+            "icon": "https://logos.example/news.png",
+        }]
+        with (
+            patch("main.xmltv_files", return_value=[]),
+            patch("main._get_xmltv_data", new=AsyncMock(return_value=(channels, []))),
+            patch("main._cache_xmltv_channel_logos", new=AsyncMock(return_value=channels)),
+            patch("main._cache_remote_image", new=AsyncMock(return_value=None)),
+        ):
+            response = self.client.get("/api/guide")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()[0]["logo_url"])
+        self.assertNotIn("/img?u=", response.text)
+
     def test_server_downloads_and_reuses_cached_xmltv_logo(self):
         cache_dir = Path(self.temp_dir.name) / "images"
 

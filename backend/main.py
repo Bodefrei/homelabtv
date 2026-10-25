@@ -1391,13 +1391,33 @@ async def _cache_xmltv_channel_logos(channels):
 
     async def cache_channel(channel):
         icon_url = channel.get("icon")
-        if not icon_url:
+        if not icon_url or icon_url.startswith("/static/"):
             return dict(channel)
         async with semaphore:
             local_path = await _cache_remote_image(icon_url)
-        return {**channel, "icon": local_path or icon_url}
+        return {**channel, "icon": local_path}
 
     return await asyncio.gather(*(cache_channel(channel) for channel in channels))
+
+
+async def _cached_channel_logo_url(url, request):
+    if not url:
+        return None
+
+    base = str(request.base_url).rstrip("/")
+    if url.startswith("/static/"):
+        return base + url
+    if url.startswith(base + "/static/"):
+        return url
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.path == "/img":
+        remote_url = urllib.parse.parse_qs(parsed.query).get("u", [None])[0]
+        if remote_url:
+            url = remote_url
+
+    cached_path = await _cache_remote_image(url)
+    return local_image_url(cached_path, request) if cached_path else None
 
 
 def _program_media_type(program):
@@ -1782,9 +1802,10 @@ async def get_enriched_guide(request: Request):
                 prog_data["poster_url"] = xmltv_image
             enriched_programs.append(prog_data)
 
-        # Uploaded logo wins, then poster override, then the XMLTV icon.
-        logo = local_image_url(
-            override_data["custom_logo"] or override_data["custom_image"] or xmltv_ch.get("icon") or None,
+        # Uploaded logo wins, then poster override, then the XMLTV icon. Keep
+        # remote URLs out of the guide response; the app only receives server cache URLs.
+        logo = await _cached_channel_logo_url(
+            override_data["custom_logo"] or override_data["custom_image"] or xmltv_ch.get("icon"),
             request,
         )
 
