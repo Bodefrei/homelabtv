@@ -265,17 +265,29 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
             // Handle BACK before the focus system sees it — otherwise the first
             // press just clears the focus highlight and a second press is needed.
             .onPreviewKeyEvent { event ->
-                if (event.nativeKeyEvent.keyCode != KeyEvent.KEYCODE_BACK) return@onPreviewKeyEvent false
-                if (event.type == KeyEventType.KeyUp) {
-                    when {
-                        viewModel.dueReminder != null && overlay == Overlay.NONE -> viewModel.dismissReminder()
-                        showDetails -> showDetails = false
-                        overlay == Overlay.SETTINGS -> overlay = Overlay.MENU
-                        overlay != Overlay.NONE -> overlay = Overlay.NONE
-                        else -> overlay = Overlay.MENU
+                when (event.nativeKeyEvent.keyCode) {
+                    KeyEvent.KEYCODE_BACK -> {
+                        if (event.type == KeyEventType.KeyUp) {
+                            when {
+                                viewModel.dueReminder != null && overlay == Overlay.NONE -> viewModel.dismissReminder()
+                                showDetails -> showDetails = false
+                                overlay == Overlay.SETTINGS -> overlay = Overlay.MENU
+                                overlay != Overlay.NONE -> overlay = Overlay.NONE
+                                else -> overlay = Overlay.MENU
+                            }
+                        }
+                        true
                     }
+                    KeyEvent.KEYCODE_GUIDE -> {
+                        if (event.type == KeyEventType.KeyUp) {
+                            numberEntry = ""
+                            showDetails = false
+                            overlay = if (overlay == Overlay.GUIDE) Overlay.NONE else Overlay.GUIDE
+                        }
+                        true
+                    }
+                    else -> false
                 }
-                true
             }
             .onKeyEvent { event ->
                 val keyCode = event.nativeKeyEvent.keyCode
@@ -286,25 +298,10 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                             if (event.type == KeyEventType.KeyUp) onInfoPressed()
                             true
                         }
-                        KeyEvent.KEYCODE_GUIDE -> {
-                            if (event.type == KeyEventType.KeyUp) {
-                                showDetails = false
-                                overlay = Overlay.GUIDE
-                            }
-                            true
-                        }
                         else -> false
                     }
                 }
                 if (overlay != Overlay.NONE) {
-                    // GUIDE stays ours even inside overlays — if it leaks to the
-                    // system, Sony's own TV app launches over us
-                    if (keyCode == KeyEvent.KEYCODE_GUIDE) {
-                        if (event.type == KeyEventType.KeyUp) {
-                            overlay = if (overlay == Overlay.GUIDE) Overlay.NONE else Overlay.GUIDE
-                        }
-                        return@onKeyEvent true
-                    }
                     return@onKeyEvent false
                 }
                 val digit = digitFor(keyCode)
@@ -364,10 +361,6 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                             }
                             else -> onOkPressed()
                         }
-                    }
-                    keyCode == KeyEvent.KEYCODE_GUIDE -> {
-                        numberEntry = ""
-                        overlay = Overlay.GUIDE
                     }
                     keyCode == KeyEvent.KEYCODE_INFO -> onInfoPressed()
                 }
@@ -450,6 +443,9 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     inventorySyncInProgress = viewModel.inventorySyncInProgress,
                     channelListStatus = viewModel.channelListStatus,
                     channelListModeLabel = viewModel.channelListModeLabel,
+                    serverChannelLists = viewModel.serverChannelLists,
+                    selectedServerChannelListId = viewModel.selectedServerChannelListId,
+                    isServerChannelListSelected = viewModel.channelListMode == ChannelListMode.SERVER,
                     tunerInfo =
                         currentChannel?.let {
                             "${it.displayName} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"
@@ -457,7 +453,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     onServerUrlChange = viewModel::updateServerUrl,
                     onPairDevice = viewModel::startDevicePairing,
                     onSyncChannelInventory = { viewModel.syncChannelInventory(forceUpload = true) },
-                    onCycleChannelListMode = viewModel::cycleChannelListMode,
+                    onSelectChannelList = viewModel::selectChannelList,
                     onResume = { overlay = Overlay.NONE },
                     onOpenGuide = { overlay = Overlay.GUIDE },
                     onRefresh = { viewModel.refreshNow() },

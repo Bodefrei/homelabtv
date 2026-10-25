@@ -13,6 +13,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 data class PairingStartRequest(
     val device_id: String,
@@ -87,6 +88,13 @@ data class DeviceChannelListResponse(
     val channels: List<DeviceChannelListChannel>,
 )
 
+data class DeviceChannelListSummary(
+    val id: String,
+    val name: String,
+    val entry_count: Int,
+    val assigned: Boolean,
+)
+
 fun calculateDeviceChannelInventoryHash(channels: List<DeviceChannelInventoryEntry>): String {
     val bytes = ByteArrayOutputStream()
     for (channel in channels.sortedBy { it.channel_id }) {
@@ -133,8 +141,16 @@ interface HomelabApiService {
     @GET("api/v1/devices/me")
     suspend fun getCurrentDevice(@Header("Authorization") authorization: String): RegisteredDevice
 
+    @GET("api/v1/devices/me/channel-lists")
+    suspend fun getCurrentDeviceChannelLists(
+        @Header("Authorization") authorization: String,
+    ): List<DeviceChannelListSummary>
+
     @GET("api/v1/devices/me/channel-list")
-    suspend fun getCurrentDeviceChannelList(@Header("Authorization") authorization: String): DeviceChannelListResponse
+    suspend fun getCurrentDeviceChannelList(
+        @Header("Authorization") authorization: String,
+        @Query("list_id") listId: String? = null,
+    ): DeviceChannelListResponse
 
     @PUT("api/v1/devices/me/channels")
     suspend fun syncDeviceChannels(

@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -428,6 +429,16 @@ class PairingApiTests(unittest.TestCase):
             [entry["logical_channel_id"] for entry in details.json()["entries"]],
             ["sports.xml", "news.xml", "missing.xml"],
         )
+        second_list = self.client.post(
+            "/api/v1/channel-lists",
+            headers=admin,
+            json={
+                "name": "Morgens",
+                "entries": [{"logical_channel_id": "news.xml"}],
+            },
+        )
+        self.assertEqual(second_list.status_code, 200)
+        second_list_id = second_list.json()["id"]
 
         for device_id in (tv_one, tv_two):
             assigned = self.client.put(
@@ -453,6 +464,31 @@ class PairingApiTests(unittest.TestCase):
             [220, 210, None],
         )
         self.assertFalse(resolved_two.json()["channels"][-1]["available"])
+        list_options = self.client.get(
+            "/api/v1/devices/me/channel-lists",
+            headers=headers_one,
+        )
+        self.assertEqual(list_options.status_code, 200)
+        self.assertEqual(
+            {item["name"]: item["assigned"] for item in list_options.json()},
+            {"Abend": True, "Morgens": False},
+        )
+        selected = self.client.get(
+            f"/api/v1/devices/me/channel-list?list_id={second_list_id}",
+            headers=headers_one,
+        )
+        self.assertEqual(selected.status_code, 200)
+        self.assertEqual(selected.json()["list_id"], second_list_id)
+        self.assertEqual(
+            [item["channel_id"] for item in selected.json()["channels"]],
+            [110],
+        )
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/devices/me/channel-lists",
+            ).status_code,
+            401,
+        )
 
     def test_device_specific_mapping_overrides_legacy_guide_mapping(self):
         device_id, credential = self.paired_device()
@@ -495,12 +531,13 @@ class PairingApiTests(unittest.TestCase):
         source = Path(self.temp_dir.name) / "guide.xml"
         source.write_text("<tv/>", encoding="utf-8")
         channels = [{"id": "one.xml", "name": "Channel One", "source_file": "guide.xml"}]
-        main._xmltv_channels_cache_signature = None
-        main._xmltv_channels_cache = []
+        main._xmltv_data_cache_signature = None
+        main._xmltv_data_cache = ([], [])
 
         with (
             patch("main.xmltv_files", return_value=[str(source)]),
             patch("main.parse_xmltv", return_value=channels) as parse_xmltv,
+            patch("main.parse_xmltv_programs", return_value=[]) as parse_xmltv_programs,
         ):
             first = self.client.get("/api/xmltv/channels")
             second = self.client.get("/api/xmltv/channels")
@@ -510,6 +547,28 @@ class PairingApiTests(unittest.TestCase):
         self.assertEqual(first.json(), channels)
         self.assertEqual(second.json(), channels)
         parse_xmltv.assert_called_once_with(str(source))
+        parse_xmltv_programs.assert_called_once_with(str(source))
+
+    def test_guide_window_keeps_overlapping_programs_and_drops_distant_ones(self):
+        def xmltv_time(timestamp):
+            return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y%m%d%H%M%S %z")
+
+        window_start, window_end = 1000, 2000
+        self.assertTrue(main._programme_in_guide_window(
+            {"start": xmltv_time(900), "stop": xmltv_time(1100)},
+            window_start,
+            window_end,
+        ))
+        self.assertFalse(main._programme_in_guide_window(
+            {"start": xmltv_time(2000), "stop": xmltv_time(2100)},
+            window_start,
+            window_end,
+        ))
+        self.assertTrue(main._programme_in_guide_window(
+            {"start": "invalid", "stop": "invalid"},
+            window_start,
+            window_end,
+        ))
 
     def test_channel_inventory_rejects_wrong_hash_and_duplicate_ids(self):
         _, credential = self.paired_device()

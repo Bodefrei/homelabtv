@@ -16,6 +16,7 @@ import dev.homelabtv.data.ChannelRepository
 import dev.homelabtv.data.DeviceChannelInventoryEntry
 import dev.homelabtv.data.DeviceChannelInventoryRequest
 import dev.homelabtv.data.DeviceChannelListResponse
+import dev.homelabtv.data.DeviceChannelListSummary
 import dev.homelabtv.data.DeviceCredentialStore
 import dev.homelabtv.data.GuideRepository
 import dev.homelabtv.data.GuideState
@@ -95,6 +96,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var channelListStatus by mutableStateOf("")
+        private set
+
+    var serverChannelLists by mutableStateOf(emptyList<DeviceChannelListSummary>())
+        private set
+
+    var selectedServerChannelListId by mutableStateOf(
+        prefs.getString("selected_server_channel_list_id", null)
+    )
         private set
 
     var channelListMode by mutableStateOf(
@@ -210,38 +219,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refreshGuideAndChannelList() }
     }
 
-    fun cycleChannelListMode() {
-        channelListMode =
-            if (channelListMode == ChannelListMode.TV) ChannelListMode.SERVER else ChannelListMode.TV
-        prefs.edit().putString("channel_list_mode", channelListMode.name).apply()
+    fun selectChannelList(listId: String?) {
+        if (listId == null) {
+            channelListMode = ChannelListMode.TV
+            prefs.edit().putString("channel_list_mode", channelListMode.name).apply()
+            applyFavoriteChannelOrder()
+            channelListStatus = "TV-Kanalliste wird verwendet."
+            return
+        }
+
+        selectedServerChannelListId = listId
+        channelListMode = ChannelListMode.SERVER
+        prefs.edit()
+            .putString("channel_list_mode", channelListMode.name)
+            .putString("selected_server_channel_list_id", listId)
+            .apply()
+        favoriteChannelIds = null
+        favoriteChannelNumbers = emptyMap()
         applyFavoriteChannelOrder()
-        if (channelListMode == ChannelListMode.SERVER) {
-            channelListStatus = "Server-Favoritenliste wird geladen …"
-            viewModelScope.launch {
-                val credential =
-                    try {
-                        deviceCredentialStore.credential()
-                    } catch (e: Exception) {
-                        channelListStatus = "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
-                        return@launch
-                    }
-                if (credential == null) {
-                    channelListStatus = "Für Server-Favoriten muss dieser Fernseher gekoppelt sein."
+        channelListStatus = "Serverliste wird geladen …"
+        viewModelScope.launch {
+            val credential =
+                try {
+                    deviceCredentialStore.credential()
+                } catch (e: Exception) {
+                    channelListStatus = "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
                     return@launch
                 }
-                refreshDeviceChannelList(credential)
+            if (credential == null) {
+                channelListStatus = "Für Serverlisten muss dieser Fernseher gekoppelt sein."
+                return@launch
             }
-        } else {
-            channelListStatus = "TV-Kanalliste wird verwendet."
+            refreshDeviceChannelList(credential)
         }
     }
 
     val channelListModeLabel: String
         get() =
             if (channelListMode == ChannelListMode.SERVER) {
-                "Senderliste: Server-Favoriten"
+                val selectedName = serverChannelLists.firstOrNull { it.id == selectedServerChannelListId }?.name
+                "Senderliste: ${selectedName ?: "Serverliste"}"
             } else {
-                "Senderliste: Fernseher"
+                "Senderliste: TV"
             }
 
     private suspend fun refreshGuideAndChannelList() {
@@ -265,9 +284,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun refreshDeviceChannelList(credential: String) {
         try {
+            val api = RetrofitClient.getInstance(serverUrl)
+            val authorization = "Bearer $credential"
+            val lists = api.getCurrentDeviceChannelLists(authorization)
+            serverChannelLists = lists
+            var listId = selectedServerChannelListId
+            if (listId != null && lists.none { it.id == listId }) {
+                listId = null
+                selectedServerChannelListId = null
+                prefs.edit().remove("selected_server_channel_list_id").apply()
+            }
+            if (listId == null && channelListMode == ChannelListMode.SERVER) {
+                listId = lists.firstOrNull { it.assigned }?.id
+            }
+            if (listId != null && lists.none { it.id == listId && it.assigned }) {
+                val selectedResponse = api.getCurrentDeviceChannelList(authorization, listId)
+                applyDeviceChannelList(selectedResponse)
+                return
+            }
             val response =
                 RetrofitClient.getInstance(serverUrl)
                     .getCurrentDeviceChannelList("Bearer $credential")
+            if (selectedServerChannelListId == null && response.list_id != null) {
+                selectedServerChannelListId = response.list_id
+                prefs.edit().putString("selected_server_channel_list_id", response.list_id).apply()
+            }
             applyDeviceChannelList(response)
         } catch (e: Exception) {
             channelListStatus =
@@ -299,7 +340,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else if (response.active) {
                 "Favoritenliste „${response.name ?: "Unbenannt"}“ geladen: ${physicalChannels.size} von ${response.channels.size} Sendern verfügbar."
             } else {
-                "Dem Fernseher ist keine Server-Favoritenliste zugewiesen; die TV-Kanalliste bleibt aktiv."
+                "Keine Serverliste verfügbar; die TV-Kanalliste bleibt aktiv."
             }
     }
 

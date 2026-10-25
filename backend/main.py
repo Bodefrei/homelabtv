@@ -10,6 +10,7 @@ import struct
 import time
 import urllib.parse
 import uuid
+from datetime import datetime
 from starlette.concurrency import run_in_threadpool
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -38,9 +39,9 @@ if ADMIN_AUTH_FAILURE_LIMIT < 0:
 RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 ADMIN_SESSION_COOKIE = "homelab_admin_session"
 ADMIN_SESSION_LIFETIME_SECONDS = 12 * 60 * 60
-_xmltv_channels_cache_signature = None
-_xmltv_channels_cache = []
-_xmltv_channels_cache_lock = asyncio.Lock()
+_xmltv_data_cache_signature = None
+_xmltv_data_cache = ([], [])
+_xmltv_data_cache_lock = asyncio.Lock()
 
 
 class AdminLoginRequest(BaseModel):
@@ -858,22 +859,62 @@ async def assign_device_channel_list(
     return {"device_id": device_id, "list_id": payload.list_id}
 
 
-@app.get("/api/v1/devices/me/channel-list")
-async def get_current_device_channel_list(request: Request):
+@app.get("/api/v1/devices/me/channel-lists")
+async def get_current_device_channel_lists(request: Request):
     device_id = await _device_for_credential(request)
     db = await get_db_connection()
     cursor = await db.execute(
         """
-        SELECT l.id, l.name
-        FROM device_list_assignments a
-        JOIN channel_lists l ON l.id = a.list_id
-        WHERE a.device_id = ? AND a.is_active = 1
+        SELECT l.id, l.name, COUNT(e.id),
+               EXISTS(
+                   SELECT 1
+                   FROM device_list_assignments a
+                   WHERE a.device_id = ? AND a.list_id = l.id AND a.is_active = 1
+               )
+        FROM channel_lists l
+        LEFT JOIN channel_list_entries e ON e.list_id = l.id AND e.hidden = 0
+        GROUP BY l.id
+        ORDER BY l.name COLLATE NOCASE, l.id
         """,
         (device_id,),
     )
+    rows = await cursor.fetchall()
+    await db.close()
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "entry_count": row[2],
+            "assigned": bool(row[3]),
+        }
+        for row in rows
+    ]
+
+
+@app.get("/api/v1/devices/me/channel-list")
+async def get_current_device_channel_list(request: Request, list_id: str | None = None):
+    device_id = await _device_for_credential(request)
+    db = await get_db_connection()
+    if list_id is None:
+        cursor = await db.execute(
+            """
+            SELECT l.id, l.name
+            FROM device_list_assignments a
+            JOIN channel_lists l ON l.id = a.list_id
+            WHERE a.device_id = ? AND a.is_active = 1
+            """,
+            (device_id,),
+        )
+    else:
+        cursor = await db.execute(
+            "SELECT id, name FROM channel_lists WHERE id = ?",
+            (list_id,),
+        )
     assigned_list = await cursor.fetchone()
     if assigned_list is None:
         await db.close()
+        if list_id is not None:
+            raise HTTPException(status_code=404, detail="Channel list not found")
         return {"active": False, "list_id": None, "name": None, "channels": []}
     entries_cursor = await db.execute(
         """
@@ -1356,26 +1397,54 @@ async def get_raw_xmltv(request: Request, file: str | None = None):
 @app.get("/api/xmltv/channels")
 async def get_xmltv_channels():
     """Returns cached XMLTV channels, reloading only when a source file changes."""
-    global _xmltv_channels_cache_signature, _xmltv_channels_cache
     paths = xmltv_files()
+    channels, _ = await _get_xmltv_data(paths)
+    return channels
+
+
+def _read_xmltv_data(paths):
+    channels = []
+    programs = []
+    for path in paths:
+        channels.extend(parse_xmltv(path))
+        programs.extend(parse_xmltv_programs(path))
+    return list({channel["id"]: channel for channel in channels}.values()), programs
+
+
+async def _get_xmltv_data(paths):
+    global _xmltv_data_cache_signature, _xmltv_data_cache
     signature_items = []
     for path in paths:
         stat = os.stat(path)
         signature_items.append((path, stat.st_mtime_ns, stat.st_size))
     signature = tuple(signature_items)
-    async with _xmltv_channels_cache_lock:
-        if signature != _xmltv_channels_cache_signature:
-            channels = await run_in_threadpool(_read_xmltv_channels, paths)
-            _xmltv_channels_cache = channels
-            _xmltv_channels_cache_signature = signature
-    return _xmltv_channels_cache
+    async with _xmltv_data_cache_lock:
+        if signature != _xmltv_data_cache_signature:
+            channels, programs = await run_in_threadpool(_read_xmltv_data, paths)
+            _xmltv_data_cache = (channels, programs)
+            _xmltv_data_cache_signature = signature
+    return _xmltv_data_cache
 
 
-def _read_xmltv_channels(paths):
-    channels = []
-    for path in paths:
-        channels.extend(parse_xmltv(path))
-    return list({channel["id"]: channel for channel in channels}.values())
+def _xmltv_timestamp(value):
+    if not value or len(value) <= 14:
+        return None
+    try:
+        return datetime.strptime(
+            f"{value[:14]} {value[14:].strip()}",
+            "%Y%m%d%H%M%S %z",
+        ).timestamp()
+    except ValueError:
+        return None
+
+
+def _programme_in_guide_window(program, window_start, window_end):
+    start = _xmltv_timestamp(program.get("start"))
+    stop = _xmltv_timestamp(program.get("stop"))
+    if start is None or stop is None:
+        return True
+    return stop > window_start and start < window_end
+
 
 class MappingRequest(BaseModel):
     physical_channel: str
@@ -1490,18 +1559,33 @@ async def get_enriched_guide(request: Request):
         )
     mappings = {row[0]: {"xmltv_id": row[1], "custom_name": row[2], "custom_image": row[3], "xml_source": row[4], "custom_logo": row[5]} for row in await cursor.fetchall()}
 
-    # 2. Get all XMLTV channels (for names/logos) and programs from every XML source
-    xmltv_channels = {}
-    all_programs = []
-    for path in xmltv_files():
-        for ch in parse_xmltv(path):
-            xmltv_channels[ch["id"]] = ch
-        all_programs.extend(parse_xmltv_programs(path))
+    # 2. Get cached XMLTV channels and programs; file changes invalidate both.
+    xmltv_channel_records, all_programs = await _get_xmltv_data(xmltv_files())
+    xmltv_channels = {channel["id"]: channel for channel in xmltv_channel_records}
 
-    # Group programs by channel once instead of scanning the full list per channel
+    # The app displays a rolling 24-hour window; omit older and distant schedules.
+    window_start = int(time.time() // (30 * 60) * (30 * 60))
+    window_end = window_start + 24 * 60 * 60
     programs_by_channel = {}
     for p in all_programs:
-        programs_by_channel.setdefault(p["channel_id"], []).append(p)
+        if _programme_in_guide_window(p, window_start, window_end):
+            programs_by_channel.setdefault(p["channel_id"], []).append(p)
+
+    # TMDB searches dominate cold-start latency. Reuse each title across mapped
+    # channels and keep outbound concurrency bounded so a large guide won't flood TMDB.
+    mapped_xmltv_ids = {item["xmltv_id"] for item in mappings.values()}
+    titles = {
+        program["title"]
+        for xmltv_id in mapped_xmltv_ids
+        for program in programs_by_channel.get(xmltv_id, [])
+    }
+    tmdb_semaphore = asyncio.Semaphore(8)
+
+    async def lookup_title(title):
+        async with tmdb_semaphore:
+            return title, await tmdb.search_tmdb_cached(db, title)
+
+    title_meta = dict(await asyncio.gather(*(lookup_title(title) for title in titles)))
 
     enriched_guide = []
 
@@ -1510,13 +1594,6 @@ async def get_enriched_guide(request: Request):
         xml_id = override_data["xmltv_id"]
         ch_programs = sorted(programs_by_channel.get(xml_id, []), key=lambda p: p["start"] or "")
         xmltv_ch = xmltv_channels.get(xml_id, {})
-
-        # Enrich once per unique title — the cache makes this cheap after the first run
-        title_meta = {}
-        for prog in ch_programs:
-            title = prog["title"]
-            if title not in title_meta:
-                title_meta[title] = await tmdb.search_tmdb_cached(db, title)
 
         enriched_programs = []
         for prog in ch_programs:

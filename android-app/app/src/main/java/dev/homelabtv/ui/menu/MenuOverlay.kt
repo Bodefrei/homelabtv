@@ -1,6 +1,7 @@
 package dev.homelabtv.ui.menu
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -25,12 +27,19 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -43,6 +52,7 @@ import dev.homelabtv.theme.JellyfinBlue
 import dev.homelabtv.theme.SurfaceLight
 import dev.homelabtv.theme.TextPrimary
 import dev.homelabtv.theme.TextSecondary
+import dev.homelabtv.data.DeviceChannelListSummary
 import dev.homelabtv.ui.components.MenuListItem
 import dev.homelabtv.ui.components.StatusPill
 import kotlinx.coroutines.delay
@@ -62,11 +72,14 @@ fun MenuOverlay(
     inventorySyncInProgress: Boolean,
     channelListStatus: String,
     channelListModeLabel: String,
+    serverChannelLists: List<DeviceChannelListSummary>,
+    selectedServerChannelListId: String?,
+    isServerChannelListSelected: Boolean,
     tunerInfo: String,
     onServerUrlChange: (String) -> Unit,
     onPairDevice: () -> Unit,
     onSyncChannelInventory: () -> Unit,
-    onCycleChannelListMode: () -> Unit,
+    onSelectChannelList: (String?) -> Unit,
     onResume: () -> Unit,
     onOpenGuide: () -> Unit,
     onRefresh: () -> Unit,
@@ -85,6 +98,7 @@ fun MenuOverlay(
     val firstItem = remember { FocusRequester() }
     val pairingItem = remember { FocusRequester() }
     val settingsScrollState = rememberScrollState()
+    var showChannelListDialog by remember { mutableStateOf(false) }
     LaunchedEffect(showSettings) {
         delay(100)
         try {
@@ -156,9 +170,11 @@ fun MenuOverlay(
                 }
                 Spacer(Modifier.height(16.dp))
                 MenuListItem("Reload Channel List", Icons.Default.Refresh, onReloadChannels, focusRequester = firstItem)
-                MenuListItem(channelListModeLabel, Icons.AutoMirrored.Filled.List, onCycleChannelListMode)
+                MenuListItem(channelListModeLabel, Icons.AutoMirrored.Filled.List, onClick = {
+                    showChannelListDialog = true
+                })
                 Text(
-                    "Die Serverliste wird nur verwendet, wenn du sie hier auswählst.",
+                    "Wähle die Kanalliste des Fernsehers oder eine Server-Favoritenliste.",
                     color = TextSecondary,
                     fontSize = 12.sp,
                 )
@@ -217,6 +233,65 @@ fun MenuOverlay(
             Modifier.weight(1f)
                 .fillMaxHeight()
                 .background(Brush.horizontalGradient(listOf(Color(0xB3000000), Color.Transparent)))
+        )
+    }
+    if (showChannelListDialog) {
+        AlertDialog(
+            onDismissRequest = { showChannelListDialog = false },
+            title = { Text("Senderliste auswählen") },
+            text = {
+                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            onSelectChannelList(null)
+                            showChannelListDialog = false
+                        }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = !isServerChannelListSelected,
+                            onClick = {
+                                onSelectChannelList(null)
+                                showChannelListDialog = false
+                            },
+                        )
+                        Text("TV-Kanalliste", color = TextPrimary)
+                    }
+                    serverChannelLists.forEach { list ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                onSelectChannelList(list.id)
+                                showChannelListDialog = false
+                            }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = isServerChannelListSelected && selectedServerChannelListId == list.id,
+                                onClick = {
+                                    onSelectChannelList(list.id)
+                                    showChannelListDialog = false
+                                },
+                            )
+                            Column {
+                                Text(list.name, color = TextPrimary)
+                                Text(
+                                    "${list.entry_count} Sender${if (list.assigned) " · im Web zugewiesen" else ""}",
+                                    color = TextSecondary,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
+                    if (serverChannelLists.isEmpty()) {
+                        Text("Keine Serverlisten verfügbar. Kopple den Fernseher und erstelle eine Liste im Web.", color = TextSecondary)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showChannelListDialog = false }) {
+                    Text("Schließen")
+                }
+            },
         )
     }
 }
