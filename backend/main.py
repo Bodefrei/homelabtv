@@ -150,6 +150,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 IMAGE_CACHE_DIR = os.path.join(STATIC_DIR, "imgcache")
+IMAGE_RETRY_DIR = os.path.join(DATA_DIR, "image_cache_retry")
 IMAGE_EXT_BY_TYPE = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
@@ -162,6 +163,10 @@ MAX_CACHED_IMAGE_BYTES = 10 * 1024 * 1024
 IMAGE_FETCH_HEADERS = {
     "User-Agent": "HomelabTV/1.0 (https://github.com/Bodefrei/homelabtv)",
 }
+IMAGE_CACHE_MAX_AGE_SECONDS = 10 * 24 * 60 * 60
+IMAGE_FETCH_INTERVAL_SECONDS = 3.0
+_image_fetch_lock = asyncio.Lock()
+_image_fetch_last_started = 0.0
 
 @app.on_event("startup")
 async def startup():
@@ -203,8 +208,6 @@ async def _xmltv_refresh_loop():
                 past_hours=XMLTV_KEEP_PAST_HOURS,
                 future_hours=XMLTV_KEEP_FUTURE_HOURS,
             )
-            channels, _ = await _get_xmltv_data(xmltv_files())
-            await _cache_xmltv_channel_logos(channels)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -981,17 +984,45 @@ async def get_current_device_channel_list(request: Request, list_id: str | None 
     entries_cursor = await db.execute(
         """
         SELECT e.logical_channel_id, e.display_name, e.custom_name,
-               c.channel_id, c.display_number, c.display_name
+               c.channel_id, c.display_number, c.display_name,
+               m.custom_logo, m.custom_image
         FROM channel_list_entries e
         LEFT JOIN device_channels c
             ON c.device_id = ? AND c.xmltv_id = e.logical_channel_id AND c.removed_at IS NULL
+        LEFT JOIN channel_mappings m ON m.physical_channel = c.display_number
         WHERE e.list_id = ? AND e.hidden = 0
         ORDER BY e.sort_index, e.id
         """,
         (device_id, assigned_list[0]),
     )
     rows = await entries_cursor.fetchall()
+    favorite_ids_cursor = await db.execute(
+        """
+        SELECT DISTINCT logical_channel_id
+        FROM channel_list_entries
+        WHERE hidden = 0
+        ORDER BY logical_channel_id
+        """
+    )
+    favorite_xmltv_ids = [row[0] for row in await favorite_ids_cursor.fetchall()]
     await db.close()
+    xmltv_channel_records, _ = await _get_xmltv_data(xmltv_files())
+    xmltv_channels = {channel["id"]: channel for channel in xmltv_channel_records}
+    favorite_xmltv_channels = [
+        xmltv_channels[xmltv_id]
+        for xmltv_id in favorite_xmltv_ids
+        if xmltv_id in xmltv_channels
+    ]
+    cached_favorite_channels = await _cache_xmltv_channel_logos(favorite_xmltv_channels)
+    favorite_logos = {
+        channel["id"]: local_image_url(channel.get("icon"), request)
+        for channel in cached_favorite_channels
+    }
+    logo_overrides = {}
+    for row in rows:
+        override_url = row[6] or row[7]
+        if override_url and row[0] not in logo_overrides:
+            logo_overrides[row[0]] = await _cached_channel_logo_url(override_url, request)
     return {
         "active": True,
         "list_id": assigned_list[0],
@@ -1006,6 +1037,7 @@ async def get_current_device_channel_list(request: Request, list_id: str | None 
                 "display_number": row[4],
                 "device_channel_name": row[5],
                 "available": row[3] is not None,
+                "logo_url": logo_overrides.get(row[0]) or favorite_logos.get(row[0]),
             }
             for index, row in enumerate(rows, start=1)
         ],
@@ -1333,60 +1365,130 @@ def local_image_url(url, request):
     return url
 
 
+def _local_static_image_url(url, request):
+    if not url:
+        return None
+    base = str(request.base_url).rstrip("/")
+    if url.startswith("/static/"):
+        return base + url
+    if url.startswith(base + "/static/"):
+        return url
+    return None
+
+
 async def _cache_remote_image(url: str) -> str | None:
+    global _image_fetch_last_started
+
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or _is_blocked_host(parsed.hostname):
         logger.warning("Skipping unsupported XMLTV logo URL: %s", url)
         return None
 
     os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+    os.makedirs(IMAGE_RETRY_DIR, exist_ok=True)
     key = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    for ext in IMAGE_EXT_BY_TYPE.values():
-        cached = os.path.join(IMAGE_CACHE_DIR, key + ext)
-        if os.path.isfile(cached):
-            return f"/static/imgcache/{key}{ext}"
+    retry_marker = os.path.join(IMAGE_RETRY_DIR, key + ".retry")
 
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            async with client.stream("GET", url, headers=IMAGE_FETCH_HEADERS) as response:
-                response.raise_for_status()
-                final_url = urllib.parse.urlparse(str(response.url))
-                if final_url.scheme not in ("http", "https") or _is_blocked_host(final_url.hostname):
-                    logger.warning("Skipping XMLTV logo redirect to unsupported host: %s", response.url)
-                    return None
-                content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                extension = IMAGE_EXT_BY_TYPE.get(content_type)
-                if not extension:
-                    logger.warning("XMLTV logo has unsupported content type %s: %s", content_type, url)
-                    return None
-                content_length = response.headers.get("content-length")
-                if content_length and int(content_length) > MAX_CACHED_IMAGE_BYTES:
-                    logger.warning("XMLTV logo exceeds the image cache size limit: %s", url)
-                    return None
-
-                cached = os.path.join(IMAGE_CACHE_DIR, key + extension)
-                temporary = os.path.join(IMAGE_CACHE_DIR, f"{key}.{uuid.uuid4().hex}.tmp")
-                total_bytes = 0
-                try:
-                    with open(temporary, "wb") as image_file:
-                        async for chunk in response.aiter_bytes():
-                            total_bytes += len(chunk)
-                            if total_bytes > MAX_CACHED_IMAGE_BYTES:
-                                logger.warning("XMLTV logo exceeds the image cache size limit: %s", url)
-                                return None
-                            image_file.write(chunk)
-                    if total_bytes == 0:
-                        logger.warning("XMLTV logo is empty: %s", url)
-                        return None
-                    os.replace(temporary, cached)
-                finally:
-                    if os.path.exists(temporary):
-                        os.remove(temporary)
-                logger.info("Cached XMLTV channel logo from %s", url)
-                return f"/static/imgcache/{key}{extension}"
-    except (httpx.HTTPError, OSError, ValueError):
-        logger.exception("Could not cache XMLTV channel logo from %s", url)
+    def find_cached_image():
+        for extension in IMAGE_EXT_BY_TYPE.values():
+            path = os.path.join(IMAGE_CACHE_DIR, key + extension)
+            if os.path.isfile(path):
+                return path
         return None
+
+    def cached_image_url(path):
+        return f"/static/imgcache/{os.path.basename(path)}" if path else None
+
+    def mark_failed_attempt():
+        try:
+            with open(retry_marker, "wb"):
+                pass
+        except OSError:
+            logger.exception("Could not record failed XMLTV logo attempt for %s", url)
+
+    cached = find_cached_image()
+    if cached and time.time() - os.path.getmtime(cached) < IMAGE_CACHE_MAX_AGE_SECONDS:
+        return cached_image_url(cached)
+
+    async with _image_fetch_lock:
+        cached = find_cached_image()
+        if cached and time.time() - os.path.getmtime(cached) < IMAGE_CACHE_MAX_AGE_SECONDS:
+            return cached_image_url(cached)
+
+        if (
+            os.path.isfile(retry_marker)
+            and time.time() - os.path.getmtime(retry_marker) < IMAGE_CACHE_MAX_AGE_SECONDS
+        ):
+            logger.debug("Skipping recently failed XMLTV logo URL: %s", url)
+            return cached_image_url(cached)
+
+        delay = IMAGE_FETCH_INTERVAL_SECONDS - (time.monotonic() - _image_fetch_last_started)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        _image_fetch_last_started = time.monotonic()
+
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                async with client.stream("GET", url, headers=IMAGE_FETCH_HEADERS) as response:
+                    response.raise_for_status()
+                    final_url = urllib.parse.urlparse(str(response.url))
+                    if final_url.scheme not in ("http", "https") or _is_blocked_host(final_url.hostname):
+                        logger.warning("Skipping XMLTV logo redirect to unsupported host: %s", response.url)
+                        mark_failed_attempt()
+                        return cached_image_url(cached)
+                    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                    extension = IMAGE_EXT_BY_TYPE.get(content_type)
+                    if not extension:
+                        logger.warning("XMLTV logo has unsupported content type %s: %s", content_type, url)
+                        mark_failed_attempt()
+                        return cached_image_url(cached)
+                    content_length = response.headers.get("content-length")
+                    if content_length and int(content_length) > MAX_CACHED_IMAGE_BYTES:
+                        logger.warning("XMLTV logo exceeds the image cache size limit: %s", url)
+                        mark_failed_attempt()
+                        return cached_image_url(cached)
+
+                    refreshed = os.path.join(IMAGE_CACHE_DIR, key + extension)
+                    temporary = os.path.join(IMAGE_CACHE_DIR, f"{key}.{uuid.uuid4().hex}.tmp")
+                    total_bytes = 0
+                    try:
+                        with open(temporary, "wb") as image_file:
+                            async for chunk in response.aiter_bytes():
+                                total_bytes += len(chunk)
+                                if total_bytes > MAX_CACHED_IMAGE_BYTES:
+                                    logger.warning("XMLTV logo exceeds the image cache size limit: %s", url)
+                                    mark_failed_attempt()
+                                    return cached_image_url(cached)
+                                image_file.write(chunk)
+                        if total_bytes == 0:
+                            logger.warning("XMLTV logo is empty: %s", url)
+                            mark_failed_attempt()
+                            return cached_image_url(cached)
+                        os.replace(temporary, refreshed)
+                    finally:
+                        if os.path.exists(temporary):
+                            os.remove(temporary)
+                    if os.path.isfile(retry_marker):
+                        os.remove(retry_marker)
+                    for old_extension in IMAGE_EXT_BY_TYPE.values():
+                        old_path = os.path.join(IMAGE_CACHE_DIR, key + old_extension)
+                        if old_path != refreshed and os.path.isfile(old_path):
+                            os.remove(old_path)
+                    logger.info("Cached XMLTV channel logo from %s", url)
+                    return cached_image_url(refreshed)
+        except httpx.HTTPStatusError as exc:
+            mark_failed_attempt()
+            logger.warning(
+                "Could not cache XMLTV channel logo: upstream returned HTTP %s; "
+                "retry suppressed until the logo becomes stale: %s",
+                exc.response.status_code,
+                url,
+            )
+            return cached_image_url(cached)
+        except (httpx.HTTPError, OSError, ValueError):
+            mark_failed_attempt()
+            logger.exception("Could not cache XMLTV channel logo from %s", url)
+            return cached_image_url(cached)
 
 
 async def _cache_xmltv_channel_logos(channels):
@@ -1407,12 +1509,11 @@ async def _cached_channel_logo_url(url, request):
     if not url:
         return None
 
-    base = str(request.base_url).rstrip("/")
-    if url.startswith("/static/"):
-        return base + url
-    if url.startswith(base + "/static/"):
-        return url
+    static_url = _local_static_image_url(url, request)
+    if static_url:
+        return static_url
 
+    base = str(request.base_url).rstrip("/")
     parsed = urllib.parse.urlparse(url)
     if parsed.path == "/img":
         remote_url = urllib.parse.parse_qs(parsed.query).get("u", [None])[0]
@@ -1555,15 +1656,14 @@ async def get_raw_xmltv(request: Request, file: str | None = None):
 
 @app.get("/api/xmltv/channels")
 async def get_xmltv_channels(request: Request):
-    """Returns XMLTV channels with logos cached and served from this server."""
+    """Returns source XMLTV channels without downloading unrelated channel logos."""
     paths = xmltv_files()
     channels, _ = await _get_xmltv_data(paths)
-    channels_with_cached_logos = await _cache_xmltv_channel_logos(channels)
     return [
         {**channel, "icon": local_image_url(channel["icon"], request)}
-        if channel.get("icon")
+        if (channel.get("icon") or "").startswith("/static/")
         else channel
-        for channel in channels_with_cached_logos
+        for channel in channels
     ]
 
 
@@ -1737,14 +1837,6 @@ async def get_enriched_guide(request: Request):
     xmltv_channel_records, all_programs = await _get_xmltv_data(xmltv_files())
     xmltv_channels = {channel["id"]: channel for channel in xmltv_channel_records}
     mapped_xmltv_ids = {item["xmltv_id"] for item in mappings.values()}
-    mapped_channels = [
-        xmltv_channels[xmltv_id]
-        for xmltv_id in mapped_xmltv_ids
-        if xmltv_id in xmltv_channels
-    ]
-    cached_mapped_channels = await _cache_xmltv_channel_logos(mapped_channels)
-    xmltv_channels.update({channel["id"]: channel for channel in cached_mapped_channels})
-
     # The app displays a rolling 24-hour window; omit older and distant schedules.
     window_start = int(time.time() // (30 * 60) * (30 * 60))
     window_end = window_start + 24 * 60 * 60
@@ -1807,7 +1899,7 @@ async def get_enriched_guide(request: Request):
 
         # Uploaded logo wins, then poster override, then the XMLTV icon. Keep
         # remote URLs out of the guide response; the app only receives server cache URLs.
-        logo = await _cached_channel_logo_url(
+        logo = _local_static_image_url(
             override_data["custom_logo"] or override_data["custom_image"] or xmltv_ch.get("icon"),
             request,
         )

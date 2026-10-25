@@ -80,6 +80,7 @@ data class DeviceChannelListChannel(
     val display_number: String?,
     val device_channel_name: String?,
     val available: Boolean,
+    val logo_url: String? = null,
 )
 
 data class DeviceChannelListResponse(

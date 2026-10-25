@@ -105,6 +105,30 @@ class GuideRepository(context: Context) {
             }
         }
 
+    suspend fun applyFavoriteChannelLogos(logosByXmltvId: Map<String, String?>) =
+        withContext(Dispatchers.IO) {
+            val logoUrls = logosByXmltvId.values.filterNotNull().distinct()
+            val cachedLogos =
+                coroutineScope {
+                    val semaphore = Semaphore(6)
+                    logoUrls.map { url ->
+                        async { url to semaphore.withPermit { downloadLogo(url) } }
+                    }.awaitAll().toMap()
+                }
+            val updatedChannels =
+                _state.value.channels.map { channel ->
+                    val xmltvId = channel.xmltv_id
+                    if (xmltvId == null || xmltvId !in logosByXmltvId) {
+                        channel
+                    } else {
+                        val url = logosByXmltvId[xmltvId]
+                        channel.copy(logo_url = url?.let { cachedLogos[it] ?: it })
+                    }
+                }
+            cacheFile.writeText(gson.toJson(updatedChannels))
+            _state.value = _state.value.copy(channels = updatedChannels)
+        }
+
     private fun downloadLogo(url: String): String? {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return null
         if (!logoCacheDir.exists() && !logoCacheDir.mkdirs()) {

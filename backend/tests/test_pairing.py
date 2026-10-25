@@ -1,10 +1,12 @@
 import base64
 import asyncio
+import hashlib
 import os
 import secrets
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -493,11 +495,43 @@ class PairingApiTests(unittest.TestCase):
             )
             self.assertEqual(assigned.status_code, 200)
 
-        resolved_one = self.client.get("/api/v1/devices/me/channel-list", headers=headers_one)
-        resolved_two = self.client.get("/api/v1/devices/me/channel-list", headers=headers_two)
+        xmltv_channels = [
+            {"id": "news.xml", "icon": "https://logos.example/news.png"},
+            {"id": "sports.xml", "icon": "https://logos.example/sports.png"},
+        ]
+
+        async def cache_favorite_logos(channels):
+            return [
+                {**channel, "icon": f"/static/imgcache/{channel['id']}.png"}
+                for channel in channels
+            ]
+
+        with (
+            patch("main.xmltv_files", return_value=[]),
+            patch("main._get_xmltv_data", new=AsyncMock(return_value=(xmltv_channels, []))),
+            patch("main._cache_xmltv_channel_logos", new=AsyncMock(side_effect=cache_favorite_logos)) as cache_logos,
+        ):
+            resolved_one = self.client.get("/api/v1/devices/me/channel-list", headers=headers_one)
+            resolved_two = self.client.get("/api/v1/devices/me/channel-list", headers=headers_two)
+            selected = self.client.get(
+                f"/api/v1/devices/me/channel-list?list_id={second_list_id}",
+                headers=headers_one,
+            )
         self.assertEqual(
             [item["channel_id"] for item in resolved_one.json()["channels"]],
             [120, 110, None],
+        )
+        self.assertEqual(
+            [item["logo_url"] for item in resolved_one.json()["channels"]],
+            [
+                "http://testserver/static/imgcache/sports.xml.png",
+                "http://testserver/static/imgcache/news.xml.png",
+                None,
+            ],
+        )
+        self.assertEqual(
+            [channel["id"] for channel in cache_logos.await_args.args[0]],
+            ["news.xml", "sports.xml"],
         )
         self.assertEqual(
             [item["list_number"] for item in resolved_one.json()["channels"]],
@@ -519,10 +553,6 @@ class PairingApiTests(unittest.TestCase):
         self.assertEqual(
             {item["name"]: item["assigned"] for item in list_options.json()},
             {"Abend": True, "Morgens": False},
-        )
-        selected = self.client.get(
-            f"/api/v1/devices/me/channel-list?list_id={second_list_id}",
-            headers=headers_one,
         )
         self.assertEqual(selected.status_code, 200)
         self.assertEqual(selected.json()["list_id"], second_list_id)
@@ -614,10 +644,10 @@ class PairingApiTests(unittest.TestCase):
         lookup.assert_awaited_once()
         self.assertEqual(lookup.await_args.args[1:], ("Example Film", "movie"))
         guide_channel = response.json()[0]
-        self.assertTrue(guide_channel["logo_url"].endswith("/static/imgcache/channel.png"))
+        self.assertIsNone(guide_channel["logo_url"])
         self.assertIn("/img?u=", guide_channel["programs"][0]["poster_url"])
 
-    def test_xmltv_channel_listing_uses_server_cached_logo_url(self):
+    def test_xmltv_channel_listing_does_not_download_unfavorited_logos(self):
         channels = [{
             "id": "news.channel",
             "name": "News",
@@ -627,15 +657,13 @@ class PairingApiTests(unittest.TestCase):
         with (
             patch("main.xmltv_files", return_value=[]),
             patch("main._get_xmltv_data", new=AsyncMock(return_value=(channels, []))),
-            patch(
-                "main._cache_xmltv_channel_logos",
-                new=AsyncMock(return_value=[{**channels[0], "icon": "/static/imgcache/news.png"}]),
-            ),
+            patch("main._cache_xmltv_channel_logos", new=AsyncMock()) as cache_logos,
         ):
             response = self.client.get("/api/xmltv/channels")
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()[0]["icon"].endswith("/static/imgcache/news.png"))
+        self.assertEqual(response.json()[0]["icon"], "https://logos.example/news.png")
+        cache_logos.assert_not_awaited()
 
     def test_failed_xmltv_logo_cache_does_not_return_remote_url(self):
         async def run():
@@ -696,6 +724,8 @@ class PairingApiTests(unittest.TestCase):
             client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
             with (
                 patch.object(main, "IMAGE_CACHE_DIR", str(cache_dir)),
+                patch.object(main, "IMAGE_RETRY_DIR", str(Path(self.temp_dir.name) / "retry")),
+                patch.object(main, "IMAGE_FETCH_INTERVAL_SECONDS", 0),
                 patch("main.httpx.AsyncClient", return_value=client),
             ):
                 url = "https://logos.example/channel.png"
@@ -730,6 +760,8 @@ class PairingApiTests(unittest.TestCase):
             client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
             with (
                 patch.object(main, "IMAGE_CACHE_DIR", str(cache_dir)),
+                patch.object(main, "IMAGE_RETRY_DIR", str(Path(self.temp_dir.name) / "retry")),
+                patch.object(main, "IMAGE_FETCH_INTERVAL_SECONDS", 0),
                 patch("main.httpx.AsyncClient", return_value=client),
             ):
                 result = await main._cache_remote_image("https://logos.example/channel.svg")
@@ -740,6 +772,75 @@ class PairingApiTests(unittest.TestCase):
 
         self.assertTrue(cached_path.endswith(".svg"))
         self.assertTrue((cache_dir / Path(cached_path).name).is_file())
+
+    def test_server_refreshes_logo_only_after_ten_day_cache_age(self):
+        cache_dir = Path(self.temp_dir.name) / "stale-images"
+        url = "https://logos.example/stale.png"
+        key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        cache_dir.mkdir()
+        cached_image = cache_dir / f"{key}.png"
+        cached_image.write_bytes(b"old image")
+        old_timestamp = time.time() - main.IMAGE_CACHE_MAX_AGE_SECONDS - 1
+        os.utime(cached_image, (old_timestamp, old_timestamp))
+
+        async def run():
+            requests = []
+
+            async def handler(request):
+                requests.append(request.url)
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "image/png"},
+                    content=b"new image",
+                )
+
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            with (
+                patch.object(main, "IMAGE_CACHE_DIR", str(cache_dir)),
+                patch.object(main, "IMAGE_RETRY_DIR", str(Path(self.temp_dir.name) / "retry")),
+                patch.object(main, "IMAGE_FETCH_INTERVAL_SECONDS", 0),
+                patch("main.httpx.AsyncClient", return_value=client),
+            ):
+                result = await main._cache_remote_image(url)
+            await client.aclose()
+            return result, requests
+
+        result, requests = asyncio.run(run())
+
+        self.assertEqual(requests, [url])
+        self.assertTrue(result.endswith(f"/{key}.png"))
+        self.assertEqual(cached_image.read_bytes(), b"new image")
+        self.assertGreater(cached_image.stat().st_mtime, old_timestamp)
+
+    def test_forbidden_remote_logo_is_not_cached_or_returned(self):
+        cache_dir = Path(self.temp_dir.name) / "forbidden-images"
+
+        async def run():
+            requests = []
+
+            async def handler(request):
+                requests.append(request.url)
+                return httpx.Response(403)
+
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            with (
+                patch.object(main, "IMAGE_CACHE_DIR", str(cache_dir)),
+                patch.object(main, "IMAGE_RETRY_DIR", str(Path(self.temp_dir.name) / "retry")),
+                patch.object(main, "IMAGE_FETCH_INTERVAL_SECONDS", 0),
+                patch("main.httpx.AsyncClient", return_value=client),
+            ):
+                url = "https://logos.example/blocked.png"
+                first = await main._cache_remote_image(url)
+                second = await main._cache_remote_image(url)
+            await client.aclose()
+            return first, second, requests
+
+        first, second, requests = asyncio.run(run())
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(requests, ["https://logos.example/blocked.png"])
+        self.assertEqual(list(cache_dir.glob("*.png")), [])
+        self.assertEqual(len(list((Path(self.temp_dir.name) / "retry").glob("*.retry"))), 1)
 
     def test_xmltv_channel_endpoint_caches_parse_until_source_changes(self):
         source = Path(self.temp_dir.name) / "guide.xml"

@@ -55,7 +55,7 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 - Detailed info banner (Info / Options tabs) with audio track and closed-caption selection
 - Airing-status badges (New / Rerun / Premiere / Live / News) from XMLTV flags, shown in the info banner and guide
 - Offline-first: last guide sync is cached on the TV as JSON
-- Remote channel logos are downloaded into the server image cache and the app receives only server-local logo URLs; the app copies these images into its persistent logo cache during guide sync for offline use. If the server cannot cache a logo, the guide omits it instead of making the TV fetch the external URL.
+- During a paired device's favorites-list sync, the server checks all visible entries across every server favorites list and downloads only their remote channel logos. Cached logos are refreshed only after ten days, with at most one upstream image request every three seconds. Failed requests are marked and retried only after ten days. The app receives only server-local URLs and copies the selected list's images into its persistent logo cache for offline use.
 - Resumes on the channel you were last watching
 - Channel rescan integration: launch the tuner's scan wizard from Settings; the channel list reloads automatically when you return
 - Server web UI with separate **Fernseher** and **XMLTV & Sender** areas, device-specific XMLTV matching, shared ordered channel lists, channel logos, and name/poster overrides

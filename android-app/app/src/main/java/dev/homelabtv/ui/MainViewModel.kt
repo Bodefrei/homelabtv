@@ -270,7 +270,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 channelListStatus = "Für Serverlisten muss dieser Fernseher gekoppelt sein."
                 return@launch
             }
-            refreshDeviceChannelList(credential)
+            val response = refreshDeviceChannelList(credential)
+            if (response != null) applyFavoriteChannelLogos(response)
         }
     }
 
@@ -311,12 +312,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 val listRefresh = async { refreshDeviceChannelList(credential) }
                 guideRefresh.await()
-                listRefresh.await()
+                val response = listRefresh.await()
+                if (response != null) applyFavoriteChannelLogos(response)
             }
         }
     }
 
-    private suspend fun refreshDeviceChannelList(credential: String) {
+    private suspend fun refreshDeviceChannelList(credential: String): DeviceChannelListResponse? {
         serverChannelListsLoading = true
         try {
             val api = RetrofitClient.getInstance(serverBaseUrl(serverUrl))
@@ -361,11 +363,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     "Listen-Auswahl konnte nicht geladen werden: ${it.message ?: it.javaClass.simpleName}"
                 },
             )
+            return response
         } catch (e: Exception) {
             channelListStatus =
                 "Favoritenliste konnte nicht synchronisiert werden: ${e.message ?: e.javaClass.simpleName}"
+            return null
         } finally {
             serverChannelListsLoading = false
+        }
+    }
+
+    private suspend fun applyFavoriteChannelLogos(response: DeviceChannelListResponse) {
+        if (response.active) {
+            guideRepository.applyFavoriteChannelLogos(
+                response.channels
+                    .associate { it.logical_channel_id to it.logo_url },
+            )
         }
     }
 
