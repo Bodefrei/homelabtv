@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -529,6 +529,45 @@ class PairingApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["xmltv_id"], "device-news.xml")
+
+    def test_guide_uses_movie_artwork_and_xmltv_image_fallback(self):
+        db = sqlite3.connect(database.DB_PATH)
+        try:
+            db.execute(
+                "INSERT INTO channel_mappings (physical_channel, xmltv_id) VALUES (?, ?)",
+                ("7.1", "movie-channel"),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        channels = [{
+            "id": "movie-channel",
+            "name": "Movie Channel",
+            "icon": "https://images.example/channel.png",
+        }]
+        programs = [{
+            "channel_id": "movie-channel",
+            "start": "invalid",
+            "stop": "invalid",
+            "title": "Example Film",
+            "description": "",
+            "categories": ["Film"],
+            "image_url": "https://images.example/poster.png",
+        }]
+        with (
+            patch("main.xmltv_files", return_value=[]),
+            patch("main._get_xmltv_data", new=AsyncMock(return_value=(channels, programs))),
+            patch("main.tmdb.search_tmdb_cached", new=AsyncMock(return_value=None)) as lookup,
+        ):
+            response = self.client.get("/api/guide")
+
+        self.assertEqual(response.status_code, 200)
+        lookup.assert_awaited_once()
+        self.assertEqual(lookup.await_args.args[1:], ("Example Film", "movie"))
+        guide_channel = response.json()[0]
+        self.assertIn("/img?u=", guide_channel["logo_url"])
+        self.assertIn("/img?u=", guide_channel["programs"][0]["poster_url"])
 
     def test_xmltv_channel_endpoint_caches_parse_until_source_changes(self):
         source = Path(self.temp_dir.name) / "guide.xml"

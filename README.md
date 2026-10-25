@@ -65,7 +65,7 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 - **TV**: Android TV with a built-in tuner exposed through the TV Input Framework (tested on Sony Bravia with ATSC; other brands with hardware tuners should work — reports welcome). Streaming boxes without tuners will only show the guide.
 - **Server**: anything that runs Docker.
 - **Guide source**: one or more XMLTV files (WebGrab+Plus, [zap2xml](https://github.com/jef/zap2xml), or any XMLTV producer). Every `.xml` file in the data directory is parsed.
-- Optional: a free [TMDB API key](https://www.themoviedb.org/settings/api) for posters and backdrops.
+- Optional: a free [TMDB API key](https://www.themoviedb.org/settings/api) for series and movie posters/backdrops. When XMLTV provides a programme image, it is used as a poster fallback. Sender logos come from the XMLTV channel icon or can be uploaded in the server's **XMLTV & Sender** area.
 
 ## Setup
 

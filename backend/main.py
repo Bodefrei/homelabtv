@@ -1324,6 +1324,12 @@ def local_image_url(url, request):
         return base + "/img?u=" + urllib.parse.quote(url, safe="")
     return url
 
+
+def _program_media_type(program):
+    categories = (category.casefold() for category in program.get("categories", []))
+    return "movie" if any("film" in category or "movie" in category for category in categories) else "tv"
+
+
 def _is_blocked_host(host):
     """Basic SSRF guard: don't let the proxy reach loopback/link-local/private hosts."""
     if not host:
@@ -1630,17 +1636,17 @@ async def get_enriched_guide(request: Request):
     # channels and keep outbound concurrency bounded so a large guide won't flood TMDB.
     mapped_xmltv_ids = {item["xmltv_id"] for item in mappings.values()}
     titles = {
-        program["title"]
+        (program["title"], _program_media_type(program))
         for xmltv_id in mapped_xmltv_ids
         for program in programs_by_channel.get(xmltv_id, [])
     }
     tmdb_semaphore = asyncio.Semaphore(8)
 
-    async def lookup_title(title):
+    async def lookup_title(title, media_type):
         async with tmdb_semaphore:
-            return title, await tmdb.search_tmdb_cached(db, title)
+            return (title, media_type), await tmdb.search_tmdb_cached(db, title, media_type)
 
-    title_meta = dict(await asyncio.gather(*(lookup_title(title) for title in titles)))
+    title_meta = dict(await asyncio.gather(*(lookup_title(title, media_type) for title, media_type in titles)))
 
     enriched_guide = []
 
@@ -1652,7 +1658,7 @@ async def get_enriched_guide(request: Request):
 
         enriched_programs = []
         for prog in ch_programs:
-            tmdb_meta = title_meta.get(prog["title"])
+            tmdb_meta = title_meta.get((prog["title"], _program_media_type(prog)))
             prog_data = {
                 "title": prog["title"],
                 "start": prog["start"],
@@ -1664,12 +1670,19 @@ async def get_enriched_guide(request: Request):
                 "poster_url": None,
                 "backdrop_url": None,
             }
+            xmltv_image = local_image_url(prog.get("image_url"), request)
             if tmdb_meta:
-                raw_poster = override_data["custom_image"] if override_data["custom_image"] else tmdb_meta["poster_url"]
+                raw_poster = (
+                    override_data["custom_image"]
+                    or tmdb_meta["poster_url"]
+                    or prog.get("image_url")
+                )
                 # Route all artwork through the LAN image proxy so the TV never
                 # needs internet access to load posters/backdrops.
                 prog_data["poster_url"] = local_image_url(raw_poster, request)
                 prog_data["backdrop_url"] = local_image_url(tmdb_meta["backdrop_url"], request)
+            else:
+                prog_data["poster_url"] = xmltv_image
             enriched_programs.append(prog_data)
 
         # Uploaded logo wins, then poster override, then the XMLTV icon.

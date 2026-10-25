@@ -154,6 +154,10 @@ def parse_xmltv_programs(file_path):
             sub_node = prog.find('sub-title')
             episode_title = sub_node.text.strip() if sub_node is not None and sub_node.text else None
 
+            icon_node = prog.find('icon')
+            image_url = icon_node.get('src') if icon_node is not None else None
+            categories = [category.text.strip() for category in prog.findall('category') if category.text]
+
             programs.append({
                 "channel_id": channel_id,
                 "start": start,
@@ -162,10 +166,11 @@ def parse_xmltv_programs(file_path):
                 "description": desc,
                 "episode": parse_episode(prog),
                 "episode_title": episode_title,
-                "flag": parse_flag(prog)
+                "flag": parse_flag(prog),
+                "image_url": image_url,
+                "categories": categories,
             })
     except Exception as e:
         print(f"Error parsing programmes from {file_path}: {e}")
 
     return programs
-
