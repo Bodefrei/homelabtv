@@ -159,6 +159,23 @@ adb install -r homelabtv-*.apk
 
 **Option B — build it yourself**:
 
+On Windows, use the scripts in the repository root:
+
+```bat
+build-dev.bat
+build-prod.bat
+```
+
+The dev APK is `android-app\app\build\outputs\apk\dev\app-dev.apk` and keeps the
+dev branding. The production APK is
+`android-app\app\build\outputs\apk\release\app-release.apk` and uses the clean
+production logo and banner. Configure `HOMELABTV_KEYSTORE`,
+`HOMELABTV_KEYSTORE_PASSWORD`, `HOMELABTV_KEY_ALIAS`, and
+`HOMELABTV_KEY_PASSWORD` to sign production builds with your release key;
+without them, Gradle uses its configured fallback signing key.
+
+On macOS or Linux, build the debug variant directly:
+
 ```bash
 cd android-app
 ./gradlew assembleDebug

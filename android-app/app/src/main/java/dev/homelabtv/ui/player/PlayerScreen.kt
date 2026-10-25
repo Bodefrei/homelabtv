@@ -35,8 +35,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -283,24 +286,23 @@ fun ZapperOverlay(
                         )
                     }
                     Spacer(Modifier.height(4.dp))
+                    val episodeLine = current?.episodeLine() ?: ""
                     Text(
-                        current?.title ?: "No guide data",
+                        buildAnnotatedString {
+                            append(current?.title ?: "No guide data")
+                            if (episodeLine.isNotEmpty()) {
+                                withStyle(SpanStyle(color = TextSecondary, fontSize = 14.sp)) {
+                                    append(" | ")
+                                    append(episodeLine)
+                                }
+                            }
+                        },
                         color = TextPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    val episodeLine = current?.episodeLine() ?: ""
-                    if (episodeLine.isNotEmpty()) {
-                        Text(
-                            episodeLine,
-                            color = TextSecondary,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                     val start = XmltvTime.parse(current?.start)
                     val stop = XmltvTime.parse(current?.stop)
                     if (start != null && stop != null && stop > start) {
