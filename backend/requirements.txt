@@ -6,3 +6,4 @@ aiosqlite
 httpx
 jinja2
 python-multipart
+zeroconf

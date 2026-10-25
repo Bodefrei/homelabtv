@@ -77,6 +77,11 @@ Create `backend/.env` with a private administrator token (the file is ignored by
 HOMELAB_ADMIN_TOKEN=paste-a-long-random-token-here
 HOMELAB_ADMIN_AUTH_FAILURE_LIMIT=10
 TMDB_API_KEY=yourkey
+HOMELAB_XMLTV_URL=https://www.free-epg.de/api/epg/de.xml.gz
+HOMELAB_XMLTV_REFRESH_HOURS=12
+HOMELAB_XMLTV_KEEP_PAST_HOURS=1
+HOMELAB_XMLTV_KEEP_FUTURE_HOURS=30
+HOMELAB_MDNS_ENABLED=true
 ```
 
 Generate a token with Python:
@@ -97,7 +102,11 @@ Open `http://<server>:30060`. The HomelabTV login page asks for the value of `HO
 
 `HOMELAB_ADMIN_AUTH_FAILURE_LIMIT` controls failed administrator logins per client within five minutes. It defaults to `10`; set it to another non-negative integer to change the limit, or `0` to disable this lockout. Disabling it removes a protection against password guessing, so use it only on a trusted network. Restart/recreate the backend container after changing `.env`.
 
+The backend downloads the configured gzip-compressed XMLTV feed immediately at startup and every 12 hours by default. It replaces `backend/data/automatic.xml` atomically, keeping programmes from one hour in the past through 30 hours in the future; failed downloads leave the last valid file in place. Set `HOMELAB_XMLTV_URL` to an empty value to disable automatic downloads. The Android app independently refreshes its cached guide from the server every 15 minutes.
+
 Opening the web interface shows a HomelabTV login page for the administrator token instead of the browser's HTTP Basic authentication dialog. A successful login creates a 12-hour HttpOnly session cookie; use **Log out** to end the session.
+
+The backend advertises `_homelabtv._tcp.local.` via mDNS on port `30060`. The Android TV can search for it under **Settings → Find HomelabTV server on network**. This Docker Compose setup uses host networking so mDNS multicast is visible on the LAN; it requires a Linux Docker host, and the backend listens directly on host port `30060`. Set `HOMELAB_MDNS_ENABLED=false` to disable advertising. Alternatively, enter a hostname or IP address in the app's server field; the app adds `http://` and port `30060` automatically.
 
 #### Pair an Android TV
 
@@ -109,7 +118,7 @@ The versioned API used by this flow is:
 2. An administrator approves or rejects the code at `POST /api/v1/pairing/approve` or `POST /api/v1/pairing/reject`. These endpoints require the admin token as a Bearer credential and `{"user_code":"123456"}` as the JSON body.
 3. The TV polls `POST /api/v1/devices/{device_id}/poll` with its device secret. After approval, the server returns the device credential once.
 
-`GET /api/v1/devices/me` checks a device credential. Administrators can list devices at `GET /api/v1/devices` and revoke a credential with `POST /api/v1/devices/{device_id}/revoke`. Admin and pairing attempts are rate-limited. Enter the server URL manually in TV Settings; automatic server discovery is not implemented.
+`GET /api/v1/devices/me` checks a device credential. Administrators can list devices at `GET /api/v1/devices` and revoke a credential with `POST /api/v1/devices/{device_id}/revoke`. Admin and pairing attempts are rate-limited.
 
 After pairing, the TV uploads its physical `TvContract` channel inventory to `PUT /api/v1/devices/me/channels` using its device credential. The server verifies a deterministic SHA-256 hash, records changed inventories as revisions, and marks channels missing from a later scan as unavailable instead of deleting their history. The app syncs on startup, after reloading channels, after pairing, and on request from **Settings → Sync Channel Inventory**. Administrators can inspect current and previously scanned channels at `GET /api/v1/devices/{device_id}/channels`. Use HTTPS with a trusted certificate when possible; HTTP should only be used on a trusted local network.
 

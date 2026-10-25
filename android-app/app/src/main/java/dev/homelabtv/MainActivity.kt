@@ -436,7 +436,11 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                         currentChannel?.let {
                             "${it.displayName} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"
                         } ?: "No tuner detected",
+                    serverDiscoveryStatus = viewModel.serverDiscoveryStatus,
+                    discoveredServers = viewModel.discoveredServers,
                     onServerUrlChange = viewModel::updateServerUrl,
+                    onDiscoverServers = viewModel::discoverServers,
+                    onSelectDiscoveredServer = viewModel::selectDiscoveredServer,
                     onPairDevice = viewModel::startDevicePairing,
                     onSyncChannelInventory = { viewModel.syncChannelInventory(forceUpload = true) },
                     onSelectChannelList = viewModel::selectChannelList,

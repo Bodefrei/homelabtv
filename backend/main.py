@@ -10,6 +10,7 @@ import struct
 import time
 import urllib.parse
 import uuid
+import logging
 from datetime import datetime
 from starlette.concurrency import run_in_threadpool
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -19,13 +20,23 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 import httpx
 import uvicorn
-import xml.etree.ElementTree as ET
 from xmltv_parser import parse_xmltv, parse_xmltv_programs
 from database import get_db_connection, init_db
-from config import TMDB_API_KEY, DATA_DIR
+from config import (
+    DATA_DIR,
+    MDNS_ENABLED,
+    TMDB_API_KEY,
+    XMLTV_FEED_URL,
+    XMLTV_KEEP_FUTURE_HOURS,
+    XMLTV_KEEP_PAST_HOURS,
+    XMLTV_REFRESH_INTERVAL_HOURS,
+)
+from xmltv_sync import download_xmltv
+from mdns import register_mdns_service
 import tmdb
 
 app = FastAPI(title="HomelabTV Backend")
+logger = logging.getLogger(__name__)
 
 PAIRING_LIFETIME_SECONDS = 5 * 60
 PAIRING_REQUEST_LIMIT = 5
@@ -42,6 +53,8 @@ ADMIN_SESSION_LIFETIME_SECONDS = 12 * 60 * 60
 _xmltv_data_cache_signature = None
 _xmltv_data_cache = ([], [])
 _xmltv_data_cache_lock = asyncio.Lock()
+_xmltv_refresh_task = None
+_mdns_service = None
 
 
 class AdminLoginRequest(BaseModel):
@@ -147,7 +160,49 @@ IMAGE_EXT_BY_TYPE = {
 
 @app.on_event("startup")
 async def startup():
+    global _xmltv_refresh_task, _mdns_service
     await init_db()
+    if MDNS_ENABLED:
+        try:
+            _mdns_service = await register_mdns_service()
+        except Exception:
+            logger.exception("Could not advertise the backend via mDNS")
+    if XMLTV_FEED_URL:
+        if not XMLTV_FEED_URL.startswith("https://"):
+            raise RuntimeError("HOMELAB_XMLTV_URL must use HTTPS")
+        _xmltv_refresh_task = asyncio.create_task(_xmltv_refresh_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global _xmltv_refresh_task, _mdns_service
+    if _xmltv_refresh_task is not None:
+        _xmltv_refresh_task.cancel()
+        try:
+            await _xmltv_refresh_task
+        except asyncio.CancelledError:
+            pass
+        _xmltv_refresh_task = None
+    if _mdns_service is not None:
+        await _mdns_service.async_close()
+        _mdns_service = None
+
+
+async def _xmltv_refresh_loop():
+    destination = os.path.join(DATA_DIR, "automatic.xml")
+    while True:
+        try:
+            await download_xmltv(
+                XMLTV_FEED_URL,
+                destination,
+                past_hours=XMLTV_KEEP_PAST_HOURS,
+                future_hours=XMLTV_KEEP_FUTURE_HOURS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Automatic XMLTV refresh failed; keeping the last valid feed")
+        await asyncio.sleep(XMLTV_REFRESH_INTERVAL_HOURS * 60 * 60)
 
 
 async def _enforce_rate_limit(db, rate_key: str, limit: int):

@@ -26,6 +26,8 @@ class PairingApiTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.previous_db_path = database.DB_PATH
         self.previous_admin_token = os.environ.get("HOMELAB_ADMIN_TOKEN")
+        self.previous_mdns_enabled = main.MDNS_ENABLED
+        main.MDNS_ENABLED = False
         database.DB_PATH = str(Path(self.temp_dir.name) / "test.db")
         os.environ["HOMELAB_ADMIN_TOKEN"] = ADMIN_TOKEN
         self.client_context = TestClient(main.app)
@@ -34,6 +36,7 @@ class PairingApiTests(unittest.TestCase):
     def tearDown(self):
         self.client_context.__exit__(None, None, None)
         database.DB_PATH = self.previous_db_path
+        main.MDNS_ENABLED = self.previous_mdns_enabled
         if self.previous_admin_token is None:
             os.environ.pop("HOMELAB_ADMIN_TOKEN", None)
         else:

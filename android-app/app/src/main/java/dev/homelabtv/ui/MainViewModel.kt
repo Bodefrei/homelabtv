@@ -2,6 +2,8 @@ package dev.homelabtv.ui
 
 import android.app.Application
 import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -31,14 +33,17 @@ import dev.homelabtv.data.channelMajor
 import dev.homelabtv.data.channelMinor
 import dev.homelabtv.data.normalizeChannelNumber
 import dev.homelabtv.data.numberPrefixComplete
+import dev.homelabtv.data.serverBaseUrl
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.net.URI
+import java.net.URISyntaxException
 
 data class Reminder(val channel: String, val title: String, val startMillis: Long)
+data class DiscoveredServer(val name: String, val host: String)
 
 enum class NumberEntryMode {
     /** Learn from the scanned lineup: complete a prefix as soon as it's unambiguous. */
@@ -74,8 +79,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var currentChannelIndex by mutableIntStateOf(0)
         private set
 
-    var serverUrl by mutableStateOf(prefs.getString("server_url", DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL)
+    var serverUrl by mutableStateOf(normalizeSavedServerHost(prefs.getString("server_url", DEFAULT_SERVER_URL)))
         private set
+
+    var discoveredServers by mutableStateOf<List<DiscoveredServer>>(emptyList())
+        private set
+
+    var serverDiscoveryStatus by mutableStateOf("")
+        private set
+
+    private var serverDiscoveryListener: NsdManager.DiscoveryListener? = null
 
     var numberEntryMode by mutableStateOf(loadNumberEntryMode())
         private set
@@ -270,16 +283,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
 
     private suspend fun refreshGuideAndChannelList() {
+        val baseUrl =
+            try {
+                serverBaseUrl(serverUrl)
+            } catch (e: IllegalArgumentException) {
+                channelListStatus =
+                    if (serverUrl.isBlank()) ""
+                    else "Serveradresse ist ungültig: ${e.message ?: "Ungültiger Hostname"}"
+                return
+            }
         val credential =
             try {
                 deviceCredentialStore.credential()
             } catch (e: Exception) {
                 channelListStatus = "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
-                guideRepository.refresh(serverUrl)
+                guideRepository.refresh(baseUrl)
                 return
             }
         coroutineScope {
-            val guideRefresh = async { guideRepository.refresh(serverUrl, credential) }
+            val guideRefresh = async { guideRepository.refresh(baseUrl, credential) }
             if (credential == null) {
                 guideRefresh.await()
                 favoriteChannelIds = null
@@ -296,7 +318,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshDeviceChannelList(credential: String) {
         serverChannelListsLoading = true
         try {
-            val api = RetrofitClient.getInstance(serverUrl)
+            val api = RetrofitClient.getInstance(serverBaseUrl(serverUrl))
             val authorization = "Bearer $credential"
             var listOptionsError: Exception? = null
             try {
@@ -490,9 +512,113 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .takeIf { it >= 0 }
     }
 
+    override fun onCleared() {
+            stopServerDiscovery()
+            super.onCleared()
+    }
+
     fun updateServerUrl(url: String) {
         serverUrl = url
         prefs.edit().putString("server_url", url).apply()
+    }
+
+    fun discoverServers() {
+        stopServerDiscovery()
+        discoveredServers = emptyList()
+        serverDiscoveryStatus = "Searching for HomelabTV servers …"
+        val manager = getApplication<Application>().getSystemService(Context.NSD_SERVICE) as? NsdManager
+        if (manager == null) {
+            serverDiscoveryStatus = "Network service discovery is unavailable on this TV."
+            return
+        }
+
+        val listener =
+            object : NsdManager.DiscoveryListener {
+                override fun onDiscoveryStarted(serviceType: String) {
+                    serverDiscoveryStatus = "Searching for HomelabTV servers …"
+                }
+
+                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    serverDiscoveryListener = null
+                    serverDiscoveryStatus = "Server search failed (error $errorCode)."
+                }
+
+                override fun onDiscoveryStopped(serviceType: String) = Unit
+
+                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    serverDiscoveryStatus = "Could not stop server search (error $errorCode)."
+                }
+
+                override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                    manager.resolveService(
+                        serviceInfo,
+                        object : NsdManager.ResolveListener {
+                            override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
+                                serverDiscoveryStatus = "Could not resolve ${info.serviceName} (error $errorCode)."
+                            }
+
+                            override fun onServiceResolved(info: NsdServiceInfo) {
+                                val hostAddress = info.host?.hostAddress
+                                if (hostAddress.isNullOrBlank()) {
+                                    serverDiscoveryStatus = "Discovered server has no usable address."
+                                    return
+                                }
+                                val discovered =
+                                    DiscoveredServer(
+                                        name = info.serviceName ?: "HomelabTV",
+                                        host = hostAddress,
+                                    )
+                                discoveredServers =
+                                    (discoveredServers.filterNot { it.host == hostAddress } + discovered)
+                                serverDiscoveryStatus = "Found ${discoveredServers.size} HomelabTV server(s)."
+                            }
+                        },
+                    )
+                }
+
+                override fun onServiceLost(serviceInfo: NsdServiceInfo) {
+                    discoveredServers =
+                        discoveredServers.filterNot { it.name == serviceInfo.serviceName }
+                    serverDiscoveryStatus =
+                        if (discoveredServers.isEmpty()) "No HomelabTV servers found."
+                        else "Found ${discoveredServers.size} HomelabTV server(s)."
+                }
+            }
+        serverDiscoveryListener = listener
+        try {
+            manager.discoverServices(MDNS_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+        } catch (e: IllegalArgumentException) {
+            serverDiscoveryListener = null
+            serverDiscoveryStatus = "Could not start server search: ${e.message ?: "invalid discovery request"}"
+            return
+        }
+        viewModelScope.launch {
+            delay(MDNS_DISCOVERY_DURATION_MS)
+            if (serverDiscoveryListener === listener) {
+                stopServerDiscovery()
+                if (discoveredServers.isEmpty()) serverDiscoveryStatus = "No HomelabTV servers found."
+            }
+        }
+    }
+
+    fun stopServerDiscovery() {
+        val listener = serverDiscoveryListener ?: return
+        serverDiscoveryListener = null
+        val manager = getApplication<Application>().getSystemService(Context.NSD_SERVICE) as? NsdManager
+        if (manager != null) {
+            try {
+                manager.stopServiceDiscovery(listener)
+            } catch (e: IllegalArgumentException) {
+                serverDiscoveryStatus = "Could not stop server search: ${e.message ?: "discovery was not active"}"
+            }
+        }
+    }
+
+    fun selectDiscoveredServer(server: DiscoveredServer) {
+        updateServerUrl(server.host)
+        serverDiscoveryStatus = "Selected ${server.name} (${server.host})."
+        stopServerDiscovery()
+        refreshNow()
     }
 
     fun startDevicePairing() {
@@ -570,15 +696,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun validatedServerUrl(value: String): String {
-        val url = value.trim()
-        val uri = URI(url)
-        require(uri.scheme.equals("http", ignoreCase = true) || uri.scheme.equals("https", ignoreCase = true)) {
-            "Server-URL muss mit http:// oder https:// beginnen."
-        }
-        require(!uri.host.isNullOrBlank() && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
-            "Server-URL enthält ungültige oder nicht unterstützte Bestandteile."
-        }
-        return if (url.endsWith("/")) url else "$url/"
+        return serverBaseUrl(value)
     }
 
     // ----- channel selection (tracks the previous channel for jump-back) -----
@@ -708,8 +826,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val DEFAULT_SERVER_URL = ""
+        private const val MDNS_SERVICE_TYPE = "_homelabtv._tcp."
+        private const val MDNS_DISCOVERY_DURATION_MS = 10_000L
         private const val PAIRING_POLL_INTERVAL_MS = 3_000L
         private const val REFRESH_INTERVAL_MS = 15L * 60 * 1000
         private const val STALE_REMINDER_MS = 5L * 60 * 1000
+    }
+}
+
+private fun normalizeSavedServerHost(value: String?): String {
+    val stored = value?.trim().orEmpty()
+    if (!stored.startsWith("http://", ignoreCase = true) &&
+        !stored.startsWith("https://", ignoreCase = true)
+    ) {
+        return stored
+    }
+    return try {
+        URI(stored).host?.removePrefix("[")?.removeSuffix("]") ?: stored
+    } catch (_: URISyntaxException) {
+        stored
     }
 }

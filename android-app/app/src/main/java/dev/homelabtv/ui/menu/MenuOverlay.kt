@@ -55,6 +55,7 @@ import dev.homelabtv.theme.SurfaceLight
 import dev.homelabtv.theme.TextPrimary
 import dev.homelabtv.theme.TextSecondary
 import dev.homelabtv.data.DeviceChannelListSummary
+import dev.homelabtv.ui.DiscoveredServer
 import dev.homelabtv.ui.components.MenuListItem
 import dev.homelabtv.ui.components.StatusPill
 import kotlinx.coroutines.delay
@@ -79,7 +80,11 @@ fun MenuOverlay(
     selectedServerChannelListId: String?,
     isServerChannelListSelected: Boolean,
     tunerInfo: String,
+    serverDiscoveryStatus: String,
+    discoveredServers: List<DiscoveredServer>,
     onServerUrlChange: (String) -> Unit,
+    onDiscoverServers: () -> Unit,
+    onSelectDiscoveredServer: (DiscoveredServer) -> Unit,
     onPairDevice: () -> Unit,
     onSyncChannelInventory: () -> Unit,
     onSelectChannelList: (String?) -> Unit,
@@ -187,10 +192,31 @@ fun MenuOverlay(
                     MenuListItem(quickThresholdLabel, Icons.Default.Add, onCycleQuickThreshold)
                 }
                 Spacer(Modifier.height(16.dp))
+                MenuListItem(
+                    "Find HomelabTV server on network",
+                    Icons.Default.Search,
+                    onDiscoverServers,
+                )
+                if (serverDiscoveryStatus.isNotBlank()) {
+                    Text(serverDiscoveryStatus, color = TextSecondary, fontSize = 12.sp)
+                }
+                discoveredServers.forEach { server ->
+                    TextButton(
+                        onClick = { onSelectDiscoveredServer(server) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(server.name, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                            Text(server.host, color = TextSecondary, fontSize = 12.sp)
+                        }
+                    }
+                }
                 TextField(
                     value = serverUrl,
                     onValueChange = onServerUrlChange,
-                    label = { Text("Server URL") },
+                    label = { Text("Server hostname or IP") },
+                    placeholder = { Text("homelabtv.local or 192.168.1.10") },
+                    supportingText = { Text("No http:// or port required; the app uses port 30060.") },
                     singleLine = true,
                     colors =
                         TextFieldDefaults.colors(
