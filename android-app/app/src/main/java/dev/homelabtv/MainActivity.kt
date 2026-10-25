@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.media.tv.TvInputInfo
 import android.media.tv.TvInputManager
 import android.os.Bundle
-import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -28,7 +27,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -102,10 +100,6 @@ class MainActivity : ComponentActivity() {
 // Not exposed as a Manifest.permission constant in current SDKs
 private const val READ_TV_LISTINGS_PERMISSION = "android.permission.READ_TV_LISTINGS"
 
-// A second INFO press this soon after the banner appeared upgrades to the
-// detailed banner; later than this it just dismisses everything.
-private const val INFO_DOUBLE_PRESS_WINDOW_MS = 2000L
-
 private val GUIDE_KEYS = setOf(KeyEvent.KEYCODE_GUIDE, KeyEvent.KEYCODE_HELP)
 
 private val HANDLED_KEYS =
@@ -165,17 +159,13 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
         onPauseOrDispose {}
     }
 
-    // INFO banners: press 1 -> bottom zapper bar, quick press 2 -> detailed top
-    // banner with track options, press 3 (or a slow press 2) -> everything away.
+    // The channel banner is shown on startup and after channel changes.
     var zapCounter by remember { mutableIntStateOf(0) }
     var zapperVisible by remember { mutableStateOf(false) }
-    var zapperShownAt by remember { mutableLongStateOf(0L) }
-    // The system clock/date only rides along when the banner came from INFO
-    var zapperShowsClock by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
+    var numberEntry by remember { mutableStateOf("") }
     LaunchedEffect(zapCounter) {
         if (zapCounter > 0) {
-            zapperShownAt = SystemClock.uptimeMillis()
             zapperVisible = true
             delay(4000)
             zapperVisible = false
@@ -188,44 +178,16 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
             showDetails = false
         }
     }
-    // Announce the current channel with the banner once the app has started up
-    LaunchedEffect(guideState.hasLoadedCache) {
-        if (guideState.hasLoadedCache && zapCounter == 0) {
-            zapperShowsClock = false
-            zapCounter++
-        }
-    }
-
     val onInfoPressed: () -> Unit = {
-        val pressedAt = SystemClock.uptimeMillis()
-        when {
-            showDetails -> showDetails = false
-            zapperVisible -> {
-                zapperVisible = false
-                if (pressedAt - zapperShownAt <= INFO_DOUBLE_PRESS_WINDOW_MS) showDetails = true
-            }
-            else -> {
-                zapperShowsClock = true
-                zapCounter++
-            }
-        }
-    }
-    // OK only toggles the bottom channel info bar — it can never escalate
-    // to the detailed banner (that's INFO's job)
-    val onOkPressed: () -> Unit = {
-        if (zapperVisible) {
-            zapperVisible = false
-        } else {
-            zapperShowsClock = false
-            zapCounter++
-        }
+        numberEntry = ""
+        showDetails = false
+        overlay = if (overlay == Overlay.GUIDE) Overlay.NONE else Overlay.GUIDE
     }
 
     // Direct channel entry from the remote's number keys. When a prefix (major
     // or minor) is unambiguous for the current mode it completes instantly;
     // otherwise a 2s pause commits whatever was typed. The decimal part maxes
     // out at two digits (hundredths).
-    var numberEntry by remember { mutableStateOf("") }
     DisposableEffect(activity) {
         activity?.setGuideKeyHandler {
             numberEntry = ""
@@ -238,8 +200,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
         val target = numberEntry.trimEnd('.')
         numberEntry = ""
         if (target.isNotEmpty() && viewModel.tuneToNumber(target)) {
-            zapperShowsClock = false
-            zapCounter++
+            showDetails = false
         }
     }
     val appendDigit: (Int) -> Unit = { digit ->
@@ -287,6 +248,12 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
     }
 
     val currentChannel = viewModel.currentChannel
+    LaunchedEffect(currentChannel?.id) {
+        if (currentChannel != null) {
+            showDetails = false
+            zapCounter++
+        }
+    }
     val currentGuide = guideState.channels.forChannel(currentChannel)
     val guideChannels =
         remember(viewModel.physicalChannels, guideState.channels, viewModel.channelListMode) {
@@ -359,47 +326,31 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_CHANNEL_UP -> {
                         numberEntry = ""
                         viewModel.zap(1)
-                        zapperShowsClock = false
-                        zapCounter++
                     }
                     keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN -> {
                         numberEntry = ""
                         viewModel.zap(-1)
-                        zapperShowsClock = false
-                        zapCounter++
                     }
                     keyCode == KeyEvent.KEYCODE_LAST_CHANNEL -> {
                         numberEntry = ""
-                        if (viewModel.jumpBack()) {
-                            zapperShowsClock = false
-                            zapCounter++
-                        }
+                        viewModel.jumpBack()
                     }
                     keyCode == KeyEvent.KEYCODE_DPAD_LEFT -> {
                         // D-pad left doubles as last-channel for remotes without the key
-                        if (viewModel.jumpBack()) {
-                            zapperShowsClock = false
-                            zapCounter++
-                        }
+                        viewModel.jumpBack()
                     }
                     keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER -> {
-                        // Long-press OK opens the detailed banner — the remote's ⓘ key
-                        // always summons Sony's own system InfoBar on top of everything
-                        // (firmware-level, unsuppressible), so OK covers all its jobs.
+                        // Long-press OK opens the detailed program banner.
                         val isLongPress =
                             event.nativeKeyEvent.eventTime - event.nativeKeyEvent.downTime >= 600
                         when {
-                            viewModel.dueReminder != null -> {
-                                viewModel.watchReminder()
-                                zapperShowsClock = false
-                                zapCounter++
-                            }
+                            viewModel.dueReminder != null -> viewModel.watchReminder()
                             numberEntry.isNotEmpty() -> commitEntry()
                             isLongPress -> {
                                 zapperVisible = false
                                 showDetails = true
                             }
-                            else -> onOkPressed()
+                            else -> zapperVisible = false
                         }
                     }
                     keyCode == KeyEvent.KEYCODE_INFO -> onInfoPressed()
@@ -428,7 +379,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
             visible = zapperVisible && overlay == Overlay.NONE && !showDetails,
             channel = currentChannel,
             guide = currentGuide,
-            showClock = zapperShowsClock,
+            showClock = false,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
 
@@ -452,8 +403,6 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     onTune = { guide ->
                         if (viewModel.tuneTo(guide)) {
                             overlay = Overlay.NONE
-                            zapperShowsClock = false
-                            zapCounter++
                         }
                     },
                     reminderKeys = viewModel.reminders.map { "${it.channel}|${it.startMillis}" }.toSet(),
@@ -502,8 +451,6 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     onReloadChannels = {
                         viewModel.reloadChannels()
                         overlay = Overlay.NONE
-                        zapperShowsClock = false
-                        zapCounter++
                     },
                     onScanChannels = {
                         val manager = context.getSystemService(Context.TV_INPUT_SERVICE) as? TvInputManager

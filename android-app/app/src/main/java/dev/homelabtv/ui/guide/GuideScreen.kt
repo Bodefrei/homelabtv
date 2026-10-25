@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +86,7 @@ private val ROW_HEIGHT = 80.dp
 private const val HALF_HOUR_MS = 30L * 60 * 1000
 private const val QUARTER_HOUR_MS = 15L * 60 * 1000
 private const val GUIDE_WINDOW_MS = 24L * 60 * 60 * 1000
+private const val GUIDE_CHUNK_MS = 3L * 60 * 60 * 1000
 private const val GUIDE_VIEWPORT_MINUTES = 165f
 
 // The live-video mini player floats over this corner of the hero panel; the
@@ -100,21 +102,21 @@ private fun widthFor(startMillis: Long, stopMillis: Long, dpPerMinute: Float): D
 private object GuideSlotCache {
     private var cachedChannels: List<ChannelGuide>? = null
     private var cachedWindowStart: Long? = null
-    private val cachedRows = LinkedHashMap<Int, List<GuideSlot>>(32, 0.75f, true)
+    private val cachedChunks = LinkedHashMap<Pair<Int, Int>, List<GuideSlot>>(32, 0.75f, true)
 
     @Synchronized
-    fun get(channels: List<ChannelGuide>, windowStart: Long, rowIndex: Int): List<GuideSlot>? =
-        if (cachedChannels === channels && cachedWindowStart == windowStart) cachedRows[rowIndex] else null
+    fun get(channels: List<ChannelGuide>, windowStart: Long, rowIndex: Int, chunkIndex: Int): List<GuideSlot>? =
+        if (cachedChannels === channels && cachedWindowStart == windowStart) cachedChunks[rowIndex to chunkIndex] else null
 
     @Synchronized
-    fun put(channels: List<ChannelGuide>, windowStart: Long, rowIndex: Int, slots: List<GuideSlot>) {
+    fun put(channels: List<ChannelGuide>, windowStart: Long, rowIndex: Int, chunkIndex: Int, slots: List<GuideSlot>) {
         if (cachedChannels !== channels || cachedWindowStart != windowStart) {
             cachedChannels = channels
             cachedWindowStart = windowStart
-            cachedRows.clear()
+            cachedChunks.clear()
         }
-        cachedRows[rowIndex] = slots
-        while (cachedRows.size > 32) cachedRows.remove(cachedRows.keys.first())
+        cachedChunks[rowIndex to chunkIndex] = slots
+        while (cachedChunks.size > 32) cachedChunks.remove(cachedChunks.keys.first())
     }
 }
 
@@ -142,6 +144,7 @@ fun GuideScreen(
         minimumStart - minimumStart % QUARTER_HOUR_MS
     }
     val windowEnd = windowStart + GUIDE_WINDOW_MS
+    var loadedChunkCount by remember(channels, windowStart) { mutableStateOf(1) }
     val scrollState = rememberScrollState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -192,6 +195,17 @@ fun GuideScreen(
         }
     }
 
+    LaunchedEffect(scrollState, windowEnd) {
+        snapshotFlow { scrollState.value to scrollState.maxValue }
+            .collect { (scrollPosition, maxScroll) ->
+                if (scrollPosition > 0 && maxScroll - scrollPosition <= 300 &&
+                    windowStart + loadedChunkCount * GUIDE_CHUNK_MS < windowEnd
+                ) {
+                    loadedChunkCount++
+                }
+            }
+    }
+
     BoxWithConstraints(modifier.fillMaxSize()) {
       val dpPerMinute = ((maxWidth - CHANNEL_COL_WIDTH).value / GUIDE_VIEWPORT_MINUTES).coerceAtLeast(1f)
       Column(Modifier.fillMaxSize()) {
@@ -213,43 +227,57 @@ fun GuideScreen(
                     }
                 }
             } else {
-                TimeHeader(windowStart, windowEnd, now, scrollState, dpPerMinute)
+                val loadedEnd = minOf(windowStart + loadedChunkCount * GUIDE_CHUNK_MS, windowEnd)
+                TimeHeader(windowStart, loadedEnd, now, scrollState, dpPerMinute)
                 LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
                     itemsIndexed(
                         items = channels,
                         key = { index, channel -> channel.physical_channel ?: channel.xmltv_id ?: index.toString() },
                     ) { rowIndex, channel ->
-                        var slots by remember(channels, rowIndex, windowStart) {
-                            mutableStateOf(GuideSlotCache.get(channels, windowStart, rowIndex))
-                        }
-                        LaunchedEffect(channels, rowIndex, windowStart) {
-                            if (slots == null) {
-                                val calculated = withContext(Dispatchers.Default) {
-                                    buildSlots(channel.safePrograms, windowStart, windowEnd)
+                        val rowSlots = mutableListOf<GuideSlot>()
+                        val rowRequestersForSlots = mutableListOf<FocusRequester>()
+                        repeat(loadedChunkCount) { chunkIndex ->
+                            val chunkStart = windowStart + chunkIndex * GUIDE_CHUNK_MS
+                            val chunkEnd = minOf(chunkStart + GUIDE_CHUNK_MS, windowEnd)
+                            var chunkSlots by remember(channels, rowIndex, windowStart, chunkIndex) {
+                                mutableStateOf(
+                                    GuideSlotCache.get(channels, windowStart, rowIndex, chunkIndex)
+                                )
+                            }
+                            LaunchedEffect(channels, rowIndex, windowStart, chunkIndex) {
+                                if (chunkSlots == null) {
+                                    val calculated = withContext(Dispatchers.Default) {
+                                        buildSlots(channel.safePrograms, chunkStart, chunkEnd)
+                                    }
+                                    GuideSlotCache.put(channels, windowStart, rowIndex, chunkIndex, calculated)
+                                    chunkSlots = calculated
                                 }
-                                GuideSlotCache.put(channels, windowStart, rowIndex, calculated)
-                                preparedSlots[rowIndex] = calculated
-                                slots = calculated
-                            } else {
-                                preparedSlots[rowIndex] = slots.orEmpty()
+                            }
+                            if (chunkSlots != null) {
+                                val chunkRequesters = remember(channels, rowIndex, chunkIndex, chunkSlots!!.size) {
+                                    chunkSlots!!.map { FocusRequester() }
+                                }
+                                rowSlots.addAll(chunkSlots!!)
+                                rowRequestersForSlots.addAll(chunkRequesters)
                             }
                         }
-                        if (slots == null) {
+                        if (rowSlots.isEmpty()) {
                             Box(Modifier.fillMaxWidth().height(ROW_HEIGHT))
                         } else {
-                            val requesters = remember(channels, rowIndex, slots!!.size) {
-                                slots!!.map { FocusRequester() }
+                            SideEffect {
+                                preparedSlots[rowIndex] = rowSlots
+                                rowRequesters[rowIndex] = rowRequestersForSlots
                             }
-                            SideEffect { rowRequesters[rowIndex] = requesters }
-                            DisposableEffect(channels, rowIndex, requesters) {
+                            DisposableEffect(channels, rowIndex, windowStart) {
                                 onDispose {
-                                    if (rowRequesters[rowIndex] === requesters) rowRequesters.remove(rowIndex)
+                                    preparedSlots.remove(rowIndex)
+                                    rowRequesters.remove(rowIndex)
                                 }
                             }
                             GuideRow(
                                 channel = channel,
-                                slots = slots!!,
-                                requesters = requesters,
+                                slots = rowSlots,
+                                requesters = rowRequestersForSlots,
                                 windowStart = windowStart,
                                 now = now,
                                 scrollState = scrollState,
@@ -560,6 +588,12 @@ private fun ProgramBlock(
     val isAiring = now in slot.startMillis until slot.stopMillis
     val isPast = slot.stopMillis <= now
     val isFuture = slot.startMillis > now
+    val isRerun = slot.program.flag.equals("Rerun", ignoreCase = true)
+    val compactFlag = when {
+        isRerun -> "↻"
+        slot.program.flag.isNullOrBlank() -> ""
+        else -> slot.program.flag.take(1).uppercase()
+    }
     Box(
         Modifier.width(widthFor(slot.startMillis, slot.stopMillis, dpPerMinute))
             .fillMaxHeight()
@@ -595,29 +629,48 @@ private fun ProgramBlock(
                 else Modifier
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(2.dp)
     ) {
-        Column {
-            Text(
-                (if (hasReminder) "⏰ " else "") + (slot.program.title ?: ""),
-                color =
-                    when {
-                        focused -> Color.Black
-                        isPast -> TextSecondary
-                        else -> TextPrimary
-                    },
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val flagSuffix = slot.program.flag?.let { " · $it" } ?: ""
-            Text(
-                "${formatClock(slot.startMillis)} – ${formatClock(slot.stopMillis)}$flagSuffix",
-                color = if (focused) Color(0xB3000000) else TextSecondary,
-                fontSize = 11.sp,
-                maxLines = 1,
-            )
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val cellWidth = maxWidth
+            val horizontalPadding = if (cellWidth >= 110.dp) 8.dp else 2.dp
+            val footer =
+                when {
+                    cellWidth >= 130.dp ->
+                        "${formatClock(slot.startMillis)} – ${formatClock(slot.stopMillis)}" +
+                            (slot.program.flag?.let { " · ${it.uppercase()}" } ?: "")
+                    cellWidth >= 82.dp ->
+                        "${formatClock(slot.startMillis)}–${formatClock(slot.stopMillis)}" +
+                            (if (compactFlag.isNotEmpty()) " $compactFlag" else "")
+                    else ->
+                        formatClock(slot.startMillis) + (if (compactFlag.isNotEmpty()) " $compactFlag" else "")
+                }
+            Column(
+                Modifier.fillMaxSize()
+                    .padding(horizontal = horizontalPadding, vertical = 5.dp)
+            ) {
+                Text(
+                    (if (hasReminder) "⏰ " else "") + (slot.program.title ?: ""),
+                    color =
+                        when {
+                            focused -> Color.Black
+                            isPast -> TextSecondary
+                            else -> TextPrimary
+                        },
+                    fontSize = if (cellWidth >= 82.dp) 13.sp else 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    footer,
+                    color = if (focused) Color(0xB3000000) else TextSecondary,
+                    fontSize = if (cellWidth >= 130.dp) 10.sp else 9.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
         }
     }
 }
