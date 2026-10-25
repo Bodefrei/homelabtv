@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -69,11 +70,32 @@ import dev.homelabtv.ui.player.rememberTvPlayerState
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    private var guideKeyHandler: (() -> Unit)? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Live TV is always "actively watched" — never let the screensaver kick in
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent { HomelabTVTheme { HomelabApp() } }
+    }
+
+    fun setGuideKeyHandler(handler: (() -> Unit)?) {
+        guideKeyHandler = handler
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode in GUIDE_KEYS && event.action in setOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+            Log.d(
+                "HomelabKeys",
+                "activity keyCode=${event.keyCode} scanCode=${event.scanCode} action=${event.action}",
+            )
+            val handler = guideKeyHandler
+            if (handler != null) {
+                if (event.action == KeyEvent.ACTION_UP) handler()
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 }
 
@@ -116,6 +138,7 @@ private enum class Overlay {
 @Composable
 private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
     val context = LocalContext.current
+    val activity = context as? MainActivity
     val guideState by viewModel.guideState.collectAsStateWithLifecycle()
     var overlay by remember { mutableStateOf(Overlay.NONE) }
     val playerState = rememberTvPlayerState()
@@ -203,6 +226,14 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
     // otherwise a 2s pause commits whatever was typed. The decimal part maxes
     // out at two digits (hundredths).
     var numberEntry by remember { mutableStateOf("") }
+    DisposableEffect(activity) {
+        activity?.setGuideKeyHandler {
+            numberEntry = ""
+            showDetails = false
+            overlay = if (overlay == Overlay.GUIDE) Overlay.NONE else Overlay.GUIDE
+        }
+        onDispose { activity?.setGuideKeyHandler(null) }
+    }
     val commitEntry: () -> Unit = {
         val target = numberEntry.trimEnd('.')
         numberEntry = ""
@@ -257,6 +288,14 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
 
     val currentChannel = viewModel.currentChannel
     val currentGuide = guideState.channels.forChannel(currentChannel)
+    val guideChannels =
+        remember(viewModel.physicalChannels, guideState.channels, viewModel.channelListMode) {
+            mergeGuide(
+                viewModel.physicalChannels,
+                guideState.channels,
+                restrictToPhysical = viewModel.channelListMode == ChannelListMode.SERVER,
+            )
+        }
 
     Box(
         Modifier.fillMaxSize()
@@ -407,11 +446,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
         when (overlay) {
             Overlay.GUIDE ->
                 GuideScreen(
-                    channels = mergeGuide(
-                        viewModel.physicalChannels,
-                        guideState.channels,
-                        restrictToPhysical = viewModel.channelListMode == ChannelListMode.SERVER,
-                    ),
+                    channels = guideChannels,
                     isOnline = guideState.isOnline,
                     initialChannelNumber = currentChannel?.displayNumber,
                     onTune = { guide ->
@@ -445,6 +480,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     channelListStatus = viewModel.channelListStatus,
                     channelListModeLabel = viewModel.channelListModeLabel,
                     serverChannelLists = viewModel.serverChannelLists,
+                    serverChannelListsLoading = viewModel.serverChannelListsLoading,
                     selectedServerChannelListId = viewModel.selectedServerChannelListId,
                     isServerChannelListSelected = viewModel.channelListMode == ChannelListMode.SERVER,
                     tunerInfo =

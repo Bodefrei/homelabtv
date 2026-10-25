@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,7 +71,9 @@ import dev.homelabtv.ui.components.FlagBadge
 import dev.homelabtv.ui.components.formatClock
 import dev.homelabtv.ui.components.formatDay
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val GUIDE_TAG = "HomelabGuide"
 private const val DP_PER_MINUTE = 4f
@@ -94,6 +97,25 @@ private data class GridRow(
     val slots: List<GuideSlot>,
     val requesters: List<FocusRequester>,
 )
+
+private data class PreparedGuideRow(val channel: ChannelGuide, val slots: List<GuideSlot>)
+
+private object GuideSlotCache {
+    private var cachedChannels: List<ChannelGuide>? = null
+    private var cachedWindowStart: Long? = null
+    private var cachedRows: List<PreparedGuideRow> = emptyList()
+
+    @Synchronized
+    fun get(channels: List<ChannelGuide>, windowStart: Long): List<PreparedGuideRow>? =
+        if (cachedChannels === channels && cachedWindowStart == windowStart) cachedRows else null
+
+    @Synchronized
+    fun put(channels: List<ChannelGuide>, windowStart: Long, rows: List<PreparedGuideRow>) {
+        cachedChannels = channels
+        cachedWindowStart = windowStart
+        cachedRows = rows
+    }
+}
 
 /**
  * Jellyfin-style full-screen guide: focused-program hero and live mini player on
@@ -120,13 +142,26 @@ fun GuideScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    val rows =
-        remember(channels, windowStart) {
-            channels
-                .map { ch ->
-                    val slots = buildSlots(ch.safePrograms, windowStart, windowEnd)
-                    GridRow(ch, slots, slots.map { FocusRequester() })
+    var preparedRows by remember(channels, windowStart) {
+        mutableStateOf(GuideSlotCache.get(channels, windowStart))
+    }
+    LaunchedEffect(channels, windowStart) {
+        if (preparedRows == null) {
+            val computedRows =
+                withContext(Dispatchers.Default) {
+                    channels.map { channel ->
+                        PreparedGuideRow(channel, buildSlots(channel.safePrograms, windowStart, windowEnd))
+                    }
                 }
+            GuideSlotCache.put(channels, windowStart, computedRows)
+            preparedRows = computedRows
+        }
+    }
+    val rows =
+        remember(preparedRows) {
+            preparedRows?.map { row ->
+                GridRow(row.channel, row.slots, row.slots.map { FocusRequester() })
+            } ?: emptyList()
         }
 
     var anchorTime by remember { mutableStateOf(now) }
@@ -189,7 +224,18 @@ fun GuideScreen(
         }
     }
 
-    Column(modifier.fillMaxSize()) {
+    if (preparedRows == null) {
+        Box(
+            modifier.fillMaxSize().background(AppBackground),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = JellyfinBlue)
+                Spacer(Modifier.height(16.dp))
+                Text("EPG wird vorbereitet …", color = TextPrimary, fontSize = 16.sp)
+            }
+        }
+    } else Column(modifier.fillMaxSize()) {
         // Hero is transparent in the top-right corner so the underlying TvView
         // (positioned there by MainActivity) shows through as a mini player.
         HeroPanel(focusedCell)

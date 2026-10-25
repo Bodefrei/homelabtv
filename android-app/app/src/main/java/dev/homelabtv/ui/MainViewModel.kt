@@ -31,6 +31,8 @@ import dev.homelabtv.data.channelMajor
 import dev.homelabtv.data.channelMinor
 import dev.homelabtv.data.normalizeChannelNumber
 import dev.homelabtv.data.numberPrefixComplete
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -58,6 +60,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val guideRepository = GuideRepository(app)
     private val channelRepository = ChannelRepository(app)
     private val deviceCredentialStore = DeviceCredentialStore(app)
+    private val gson = Gson()
 
     val guideState: StateFlow<GuideState> = guideRepository.state
 
@@ -98,7 +101,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var channelListStatus by mutableStateOf("")
         private set
 
-    var serverChannelLists by mutableStateOf(emptyList<DeviceChannelListSummary>())
+    var serverChannelLists by mutableStateOf(loadCachedServerChannelLists())
+        private set
+
+    var serverChannelListsLoading by mutableStateOf(false)
         private set
 
     var selectedServerChannelListId by mutableStateOf(
@@ -272,27 +278,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 guideRepository.refresh(serverUrl)
                 return
             }
-        guideRepository.refresh(serverUrl, credential)
-        if (credential == null) {
-            favoriteChannelIds = null
-            applyFavoriteChannelOrder()
-            channelListStatus = ""
-            return
+        coroutineScope {
+            val guideRefresh = async { guideRepository.refresh(serverUrl, credential) }
+            if (credential == null) {
+                guideRefresh.await()
+                favoriteChannelIds = null
+                applyFavoriteChannelOrder()
+                channelListStatus = ""
+            } else {
+                val listRefresh = async { refreshDeviceChannelList(credential) }
+                guideRefresh.await()
+                listRefresh.await()
+            }
         }
-        refreshDeviceChannelList(credential)
     }
 
     private suspend fun refreshDeviceChannelList(credential: String) {
-        val api = RetrofitClient.getInstance(serverUrl)
-        val authorization = "Bearer $credential"
-        var listOptionsError: Exception? = null
+        serverChannelListsLoading = true
         try {
-            serverChannelLists = api.getCurrentDeviceChannelLists(authorization)
-        } catch (e: Exception) {
-            listOptionsError = e
-            serverChannelLists = emptyList()
-        }
-        try {
+            val api = RetrofitClient.getInstance(serverUrl)
+            val authorization = "Bearer $credential"
+            var listOptionsError: Exception? = null
+            try {
+                val lists = api.getCurrentDeviceChannelLists(authorization)
+                serverChannelLists = lists
+                prefs.edit().putString("server_channel_lists", gson.toJson(lists)).apply()
+            } catch (e: Exception) {
+                listOptionsError = e
+            }
             val selectedListId =
                 if (listOptionsError == null) {
                     selectedServerChannelListId
@@ -328,8 +341,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             channelListStatus =
                 "Favoritenliste konnte nicht synchronisiert werden: ${e.message ?: e.javaClass.simpleName}"
+        } finally {
+            serverChannelListsLoading = false
         }
     }
+
+    private fun loadCachedServerChannelLists(): List<DeviceChannelListSummary> =
+        try {
+            val json = prefs.getString("server_channel_lists", null) ?: return emptyList()
+            gson.fromJson<List<DeviceChannelListSummary>>(
+                json,
+                object : TypeToken<List<DeviceChannelListSummary>>() {}.type,
+            ) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
 
     private fun applyDeviceChannelList(response: DeviceChannelListResponse, warning: String? = null) {
         favoriteChannelIds =
@@ -620,8 +646,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ----- program reminders -----
-
-    private val gson = Gson()
 
     var reminders by mutableStateOf(loadReminders())
         private set

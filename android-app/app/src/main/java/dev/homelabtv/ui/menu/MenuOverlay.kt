@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -73,6 +75,7 @@ fun MenuOverlay(
     channelListStatus: String,
     channelListModeLabel: String,
     serverChannelLists: List<DeviceChannelListSummary>,
+    serverChannelListsLoading: Boolean,
     selectedServerChannelListId: String?,
     isServerChannelListSelected: Boolean,
     tunerInfo: String,
@@ -211,7 +214,16 @@ fun MenuOverlay(
                         Text(inventorySyncStatus, color = TextSecondary, fontSize = 12.sp)
                     }
                     if (channelListStatus.isNotBlank()) {
-                        Text(channelListStatus, color = TextSecondary, fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (serverChannelListsLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.padding(end = 8.dp).size(16.dp),
+                                    color = JellyfinBlue,
+                                    strokeWidth = 2.dp,
+                                )
+                            }
+                            Text(channelListStatus, color = TextSecondary, fontSize = 12.sp)
+                        }
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -241,6 +253,23 @@ fun MenuOverlay(
             title = { Text("Senderliste auswählen") },
             text = {
                 Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                    if (serverChannelListsLoading) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = JellyfinBlue,
+                                strokeWidth = 2.dp,
+                            )
+                            Text(
+                                " Serverlisten werden aktualisiert …",
+                                color = TextSecondary,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
                     Row(
                         Modifier.fillMaxWidth().clickable {
                             onSelectChannelList(null)
@@ -282,7 +311,7 @@ fun MenuOverlay(
                             }
                         }
                     }
-                    if (serverChannelLists.isEmpty()) {
+                    if (serverChannelLists.isEmpty() && !serverChannelListsLoading) {
                         Text("Keine Serverlisten verfügbar. Kopple den Fernseher und erstelle eine Liste im Web.", color = TextSecondary)
                     }
                 }
