@@ -252,6 +252,10 @@ async def init_db():
         "CREATE INDEX IF NOT EXISTS idx_device_inventory_revisions_device "
         "ON device_inventory_revisions (device_id, revision DESC)"
     )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_channel_list_entries_list_order "
+        "ON channel_list_entries (list_id, sort_index, id)"
+    )
     await db.commit()
     await db.close()
 

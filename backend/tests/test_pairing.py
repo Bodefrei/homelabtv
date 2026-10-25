@@ -412,6 +412,17 @@ class PairingApiTests(unittest.TestCase):
             [entry["logical_channel_id"] for entry in created.json()["entries"]],
             ["sports.xml", "news.xml", "missing.xml"],
         )
+        summary = self.client.get("/api/v1/channel-lists?summary=true", headers=admin)
+        self.assertEqual(summary.status_code, 200)
+        summary_list = next(item for item in summary.json() if item["id"] == list_id)
+        self.assertEqual(summary_list["entry_count"], 3)
+        self.assertNotIn("entries", summary_list)
+        details = self.client.get(f"/api/v1/channel-lists/{list_id}", headers=admin)
+        self.assertEqual(details.status_code, 200)
+        self.assertEqual(
+            [entry["logical_channel_id"] for entry in details.json()["entries"]],
+            ["sports.xml", "news.xml", "missing.xml"],
+        )
 
         for device_id in (tv_one, tv_two):
             assigned = self.client.put(

@@ -647,17 +647,42 @@ async def map_device_channel(
     return {"device_id": device_id, "channel_id": channel_id, "xmltv_id": payload.xmltv_id}
 
 
-async def _channel_list_records(db):
+async def _channel_list_records(db, list_id: str | None = None, summary: bool = False):
+    where_clause = "WHERE id = ?" if list_id is not None else ""
+    parameters = (list_id,) if list_id is not None else ()
     cursor = await db.execute(
-        "SELECT id, name, description, created_at, updated_at FROM channel_lists "
-        "ORDER BY name COLLATE NOCASE, id"
+        f"""
+        SELECT id, name, description, created_at, updated_at,
+               (SELECT COUNT(*) FROM channel_list_entries e WHERE e.list_id = channel_lists.id)
+        FROM channel_lists {where_clause}
+        ORDER BY name COLLATE NOCASE, id
+        """,
+        parameters,
     )
     lists = await cursor.fetchall()
+    if summary:
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "created_at": row[3],
+                "updated_at": row[4],
+                "entry_count": row[5],
+            }
+            for row in lists
+        ]
+    if not lists:
+        return []
+    list_ids = [row[0] for row in lists]
+    placeholders = ", ".join("?" for _ in list_ids)
     entries_cursor = await db.execute(
-        """
+        f"""
         SELECT id, list_id, logical_channel_id, display_name, custom_name, sort_index, hidden
-        FROM channel_list_entries ORDER BY list_id, sort_index, id
-        """
+        FROM channel_list_entries WHERE list_id IN ({placeholders})
+        ORDER BY list_id, sort_index, id
+        """,
+        list_ids,
     )
     entries = await entries_cursor.fetchall()
     entries_by_list = {}
@@ -679,6 +704,7 @@ async def _channel_list_records(db):
             "description": row[2],
             "created_at": row[3],
             "updated_at": row[4],
+            "entry_count": row[5],
             "entries": entries_by_list.get(row[0], []),
         }
         for row in lists
@@ -690,14 +716,14 @@ async def _save_channel_list_entries(db, list_id: str, entries: list[ChannelList
     if len(logical_ids) != len(set(logical_ids)):
         raise HTTPException(status_code=422, detail="Channel list contains duplicate logical channel IDs")
     await db.execute("DELETE FROM channel_list_entries WHERE list_id = ?", (list_id,))
-    for sort_index, entry in enumerate(entries):
-        await db.execute(
-            """
-            INSERT INTO channel_list_entries (
-                id, list_id, logical_channel_id, display_name, custom_name,
-                sort_index, hidden, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+    await db.executemany(
+        """
+        INSERT INTO channel_list_entries (
+            id, list_id, logical_channel_id, display_name, custom_name,
+            sort_index, hidden, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
             (
                 str(uuid.uuid4()),
                 list_id,
@@ -708,17 +734,30 @@ async def _save_channel_list_entries(db, list_id: str, entries: list[ChannelList
                 int(entry.hidden),
                 now,
                 now,
-            ),
-        )
+            )
+            for sort_index, entry in enumerate(entries)
+        ],
+    )
 
 
 @app.get("/api/v1/channel-lists")
-async def get_channel_lists(request: Request):
+async def get_channel_lists(request: Request, summary: bool = False):
     await require_admin(request)
     db = await get_db_connection()
-    result = await _channel_list_records(db)
+    result = await _channel_list_records(db, summary=summary)
     await db.close()
     return result
+
+
+@app.get("/api/v1/channel-lists/{list_id}")
+async def get_channel_list(list_id: str, request: Request):
+    await require_admin(request)
+    db = await get_db_connection()
+    records = await _channel_list_records(db, list_id=list_id)
+    await db.close()
+    if not records:
+        raise HTTPException(status_code=404, detail="Channel list not found")
+    return records[0]
 
 
 @app.post("/api/v1/channel-lists")
@@ -737,7 +776,7 @@ async def create_channel_list(payload: ChannelListRequest, request: Request):
     )
     await _save_channel_list_entries(db, list_id, payload.entries, now)
     await db.commit()
-    result = next(item for item in await _channel_list_records(db) if item["id"] == list_id)
+    result = (await _channel_list_records(db, list_id=list_id))[0]
     await db.close()
     return result
 
@@ -758,7 +797,7 @@ async def update_channel_list(list_id: str, payload: ChannelListRequest, request
     )
     await _save_channel_list_entries(db, list_id, payload.entries, now)
     await db.commit()
-    result = next(item for item in await _channel_list_records(db) if item["id"] == list_id)
+    result = (await _channel_list_records(db, list_id=list_id))[0]
     await db.close()
     return result
 

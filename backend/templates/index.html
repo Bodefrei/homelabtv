@@ -37,7 +37,7 @@
         body { background: #f3f6fa; color: #253044; padding: 24px clamp(16px, 3vw, 44px); }
         .header { border-bottom: 1px solid #dce3eb; }
         .header h1 { color: #126b9a; }
-        .panel { background: #fff; border: 1px solid #e1e7ee; box-shadow: 0 5px 18px rgba(34, 54, 78, .07); }
+        .panel { min-width: 0; background: #fff; border: 1px solid #e1e7ee; box-shadow: 0 5px 18px rgba(34, 54, 78, .07); }
         .channel-item { border-bottom-color: #e8edf2; }
         .channel-item:hover { background: #f5f9fc; }
         .channel-logo { background: #eef2f6; }
@@ -55,11 +55,16 @@
         .inventory-table th, .inventory-table td { border-bottom-color: #e5ebf1; }
         .inventory-table tr.unavailable { background: #f6f7f8; color: #8691a0; }
         .inventory-table select, .list-editor select, .list-editor input { padding: 8px; border: 1px solid #cbd5df; border-radius: 5px; background: #fff; color: #253044; }
-        .list-layout { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 2fr); gap: 20px; }
-        .list-editor { display: grid; gap: 12px; }
-        .list-entry { display: grid; grid-template-columns: 42px minmax(100px, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e2e8ef; border-radius: 7px; margin: 8px 0; background: #fbfcfd; }
-        .list-entry-actions { display: flex; gap: 4px; }
+        .list-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); gap: 20px; }
+        .list-layout > div { min-width: 0; }
+        .list-editor { display: grid; align-content: start; gap: 12px; }
+        .list-entry-list { min-width: 0; max-height: min(58vh, 620px); overflow-y: auto; overflow-x: hidden; padding: 0 8px 0 0; }
+        .list-entry { box-sizing: border-box; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; padding: 10px; border: 1px solid #e2e8ef; border-radius: 7px; margin: 8px 0; background: #fbfcfd; }
+        .list-entry > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
+        .list-entry-actions { display: flex; flex-wrap: wrap; gap: 4px; }
         .list-entry-actions button { margin: 0; padding: 6px 10px; }
+        .list-pagination { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .list-pagination button { margin: 0; }
         .empty-state { padding: 22px; text-align: center; color: #718096; background: #f7f9fb; border-radius: 8px; }
         .status-ok { color: #18794e; }
         .status-warn { color: #9b5c00; }
@@ -168,7 +173,7 @@
                     <label for="channel-list-select">Liste auswählen</label>
                     <select id="channel-list-select" v-model="selectedListId" @change="selectChannelList">
                         <option value="">Neue Favoritenliste…</option>
-                        <option v-for="list in channelLists" :key="list.id" :value="list.id">{{ list.name }} ({{ list.entries.length }})</option>
+                        <option v-for="list in channelLists" :key="list.id" :value="list.id">{{ list.name }} ({{ list.entry_count }})</option>
                     </select>
                     <label for="channel-list-name">Listenname</label>
                     <input id="channel-list-name" type="text" v-model="listDraft.name" maxlength="100" placeholder="z. B. Meine Favoriten">
@@ -185,12 +190,18 @@
                         <button v-if="selectedListId" class="danger" @click="deleteChannelList" :disabled="listBusy">Liste löschen</button>
                     </div>
                     <p v-if="listMessage" :class="listError ? 'inventory-error' : 'status-ok'" role="status">{{ listMessage }}</p>
-                    <label for="assign-list">Liste diesem Fernseher zuweisen</label>
-                    <select id="assign-list" v-model="assignedListId" :disabled="!selectedDeviceId">
+                    <label for="assignment-device">Ziel-Fernseher für diese Favoritenliste</label>
+                    <select id="assignment-device" v-model="assignmentDeviceId" @change="onAssignmentDeviceSelected" :disabled="devices.length === 0">
+                        <option value="" disabled>Fernseher auswählen</option>
+                        <option v-for="device in devices" :key="device.id" :value="device.id">{{ device.friendly_name }}</option>
+                    </select>
+                    <p class="muted">Ausgewählter Ziel-Fernseher: <strong>{{ assignmentDevice ? assignmentDevice.friendly_name : 'Keiner ausgewählt' }}</strong></p>
+                    <label for="assign-list">Favoritenliste für diesen Fernseher</label>
+                    <select id="assign-list" v-model="assignedListId" :disabled="!assignmentDeviceId">
                         <option value="">Keine Liste</option>
                         <option v-for="list in channelLists" :key="list.id" :value="list.id">{{ list.name }}</option>
                     </select>
-                    <button @click="assignChannelList" :disabled="!selectedDeviceId || assignmentBusy">
+                    <button @click="assignChannelList" :disabled="!assignmentDeviceId || assignmentBusy">
                         {{ assignmentBusy ? 'Weise zu…' : 'Liste dem Fernseher zuweisen' }}
                     </button>
                     <p class="muted">Nicht zugeordnete oder auf einem Fernseher fehlende Sender werden dort nicht in die aktive Favoriten-Kanalliste aufgenommen.</p>
@@ -198,20 +209,27 @@
                 <div>
                     <h3>Reihenfolge der Sender</h3>
                     <div v-if="!listDraft.entries.length" class="empty-state">Füge XMLTV-Sender hinzu. Mit den Pfeilen legst du ihre Reihenfolge auf dem Fernseher fest.</div>
-                    <div v-for="(entry, index) in listDraft.entries" :key="entry.logical_channel_id" class="list-entry">
-                        <strong>{{ index + 1 }}</strong>
+                    <div v-if="listDraft.entries.length" class="list-pagination">
+                        <button @click="listEntryPage--" :disabled="listEntryPage === 0">Zurück</button>
+                        <span class="muted">{{ listEntryPage + 1 }} / {{ listPageCount }} · {{ listDraft.entries.length }} Sender</span>
+                        <button @click="listEntryPage++" :disabled="listEntryPage + 1 >= listPageCount">Weiter</button>
+                    </div>
+                    <div v-if="listDraft.entries.length" class="list-entry-list">
+                    <div v-for="row in visibleListEntries" :key="row.entry.logical_channel_id" class="list-entry">
+                        <strong>{{ row.index + 1 }}</strong>
                         <span>
-                            {{ channelName(entry.logical_channel_id) }}<br>
-                            <small class="muted">{{ entry.logical_channel_id }}</small><br>
-                            <small :class="channelAvailableOnSelectedDevice(entry.logical_channel_id) ? 'status-ok' : 'status-warn'">
-                                {{ channelAvailabilityLabel(entry.logical_channel_id) }}
+                            {{ xmlChannelById[row.entry.logical_channel_id] ? xmlChannelById[row.entry.logical_channel_id].name : row.entry.logical_channel_id }}<br>
+                            <small class="muted">{{ row.entry.logical_channel_id }}</small><br>
+                            <small :class="selectedDeviceXmltvIds.has(row.entry.logical_channel_id) ? 'status-ok' : 'status-warn'">
+                                {{ selectedDeviceXmltvIds.has(row.entry.logical_channel_id) ? 'Auf diesem Fernseher zugeordnet' : 'Auf diesem Fernseher noch nicht zugeordnet' }}
                             </small>
                         </span>
                         <span class="list-entry-actions">
-                            <button @click="moveListEntry(index, -1)" :disabled="index === 0" aria-label="Nach oben">↑</button>
-                            <button @click="moveListEntry(index, 1)" :disabled="index === listDraft.entries.length - 1" aria-label="Nach unten">↓</button>
-                            <button class="danger" @click="removeListEntry(index)" aria-label="Entfernen">×</button>
+                            <button @click="moveListEntry(row.index, -1)" :disabled="row.index === 0" aria-label="Nach oben">↑</button>
+                            <button @click="moveListEntry(row.index, 1)" :disabled="row.index === listDraft.entries.length - 1" aria-label="Nach unten">↓</button>
+                            <button class="danger" @click="removeListEntry(row.index)" aria-label="Entfernen">×</button>
                         </span>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -316,7 +334,11 @@
                 listError: false,
                 listMessage: '',
                 assignedListId: '',
-                assignmentBusy: false
+                assignmentBusy: false,
+                assignmentDeviceId: '',
+                listEntryPage: 0,
+                listPageSize: 50,
+                assignmentInventoryChannels: []
             },
             mounted() {
                 this.fetchData();
@@ -326,6 +348,31 @@
             computed: {
                 selectedDevice() {
                     return this.devices.find(device => device.id === this.selectedDeviceId) || null;
+                },
+                assignmentDevice() {
+                    return this.devices.find(device => device.id === this.assignmentDeviceId) || null;
+                },
+                selectedDeviceXmltvIds() {
+                    return new Set(
+                        this.assignmentInventoryChannels
+                            .filter(channel => channel.available && channel.xmltv_id)
+                            .map(channel => channel.xmltv_id)
+                    );
+                },
+                xmlChannelById() {
+                    return this.xmlChannels.reduce((channels, channel) => {
+                        channels[channel.id] = channel;
+                        return channels;
+                    }, {});
+                },
+                visibleListEntries() {
+                    const start = this.listEntryPage * this.listPageSize;
+                    return this.listDraft.entries
+                        .slice(start, start + this.listPageSize)
+                        .map((entry, offset) => ({ entry, index: start + offset }));
+                },
+                listPageCount() {
+                    return Math.max(1, Math.ceil(this.listDraft.entries.length / this.listPageSize));
                 },
                 availableListChannels() {
                     const existing = new Set(this.listDraft.entries.map(entry => entry.logical_channel_id));
@@ -355,8 +402,12 @@
                             this.selectedDeviceId = this.devices[0] ? this.devices[0].id : '';
                             this.inventoryChannels = [];
                         }
-                        this.assignedListId = this.selectedDevice ? (this.selectedDevice.assigned_channel_list || '') : '';
+                        if (!this.assignmentDeviceId || !this.devices.some(device => device.id === this.assignmentDeviceId)) {
+                            this.assignmentDeviceId = this.selectedDeviceId;
+                        }
+                        this.assignedListId = this.assignmentDevice ? (this.assignmentDevice.assigned_channel_list || '') : '';
                         if (this.selectedDeviceId) await this.fetchDeviceInventory();
+                        await this.fetchAssignmentDeviceInventory();
                     } catch (error) {
                         this.inventoryError = error.message || 'Could not load devices.';
                     } finally {
@@ -375,8 +426,14 @@
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.detail || 'Could not load channel inventory.');
                         this.inventoryChannels = data;
+                        if (this.assignmentDeviceId === this.selectedDeviceId) {
+                            this.assignmentInventoryChannels = data;
+                        }
                     } catch (error) {
                         this.inventoryChannels = [];
+                        if (this.assignmentDeviceId === this.selectedDeviceId) {
+                            this.assignmentInventoryChannels = [];
+                        }
                         this.inventoryError = error.message || 'Could not load channel inventory.';
                     } finally {
                         this.inventoryLoading = false;
@@ -384,7 +441,36 @@
                 },
                 async onDeviceSelected() {
                     this.assignedListId = this.selectedDevice ? (this.selectedDevice.assigned_channel_list || '') : '';
+                    this.assignmentDeviceId = this.selectedDeviceId;
+                    this.assignmentInventoryChannels = this.inventoryChannels;
                     await this.fetchDeviceInventory();
+                    this.assignmentInventoryChannels = this.inventoryChannels;
+                },
+                async onAssignmentDeviceSelected() {
+                    this.assignedListId = this.assignmentDevice ? (this.assignmentDevice.assigned_channel_list || '') : '';
+                    await this.fetchAssignmentDeviceInventory();
+                },
+                async fetchAssignmentDeviceInventory() {
+                    if (!this.assignmentDeviceId) {
+                        this.assignmentInventoryChannels = [];
+                        return;
+                    }
+                    if (this.assignmentDeviceId === this.selectedDeviceId && this.inventoryChannels.length) {
+                        this.assignmentInventoryChannels = this.inventoryChannels;
+                        return;
+                    }
+                    try {
+                        const response = await fetch(
+                            '/api/v1/devices/' + encodeURIComponent(this.assignmentDeviceId) + '/channels'
+                        );
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Senderinventar des Ziel-Fernsehers konnte nicht geladen werden.');
+                        this.assignmentInventoryChannels = data;
+                    } catch (error) {
+                        this.assignmentInventoryChannels = [];
+                        this.listError = true;
+                        this.listMessage = error.message || 'Senderinventar des Ziel-Fernsehers konnte nicht geladen werden.';
+                    }
                 },
                 async saveDeviceMapping(channel, xmltvId) {
                     try {
@@ -407,7 +493,7 @@
                 },
                 async fetchChannelLists() {
                     try {
-                        const response = await fetch('/api/v1/channel-lists');
+                        const response = await fetch('/api/v1/channel-lists?summary=true');
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.detail || 'Favoritenlisten konnten nicht geladen werden.');
                         this.channelLists = data;
@@ -416,36 +502,32 @@
                         this.listMessage = error.message || 'Favoritenlisten konnten nicht geladen werden.';
                     }
                 },
-                selectChannelList() {
-                    const selected = this.channelLists.find(list => list.id === this.selectedListId);
-                    this.listDraft = selected
-                        ? {
-                            name: selected.name,
-                            description: selected.description || '',
-                            entries: selected.entries.map(entry => ({ logical_channel_id: entry.logical_channel_id }))
-                        }
-                        : { name: '', description: '', entries: [] };
+                async selectChannelList() {
+                    this.listEntryPage = 0;
                     this.listMessage = '';
-                },
-                channelName(channelId) {
-                    const channel = this.xmlChannels.find(item => item.id === channelId);
-                    return channel ? channel.name : channelId;
-                },
-                channelAvailableOnSelectedDevice(channelId) {
-                    return Boolean(this.selectedDeviceId && this.inventoryChannels.some(
-                        channel => channel.available && channel.xmltv_id === channelId
-                    ));
-                },
-                channelAvailabilityLabel(channelId) {
-                    if (!this.selectedDeviceId) return 'Fernseher für Verfügbarkeitsprüfung auswählen';
-                    return this.channelAvailableOnSelectedDevice(channelId)
-                        ? 'Auf diesem Fernseher zugeordnet'
-                        : 'Auf diesem Fernseher noch nicht zugeordnet';
+                    if (!this.selectedListId) {
+                        this.listDraft = { name: '', description: '', entries: [] };
+                        return;
+                    }
+                    try {
+                        const response = await fetch('/api/v1/channel-lists/' + encodeURIComponent(this.selectedListId));
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Favoritenliste konnte nicht geladen werden.');
+                        this.listDraft = {
+                            name: data.name,
+                            description: data.description || '',
+                            entries: data.entries.map(entry => ({ logical_channel_id: entry.logical_channel_id }))
+                        };
+                    } catch (error) {
+                        this.listError = true;
+                        this.listMessage = error.message || 'Favoritenliste konnte nicht geladen werden.';
+                    }
                 },
                 addListChannel() {
                     if (!this.newListChannelId || this.listDraft.entries.some(entry => entry.logical_channel_id === this.newListChannelId)) return;
                     this.listDraft.entries.push({ logical_channel_id: this.newListChannelId });
                     this.newListChannelId = '';
+                    this.listEntryPage = this.listPageCount - 1;
                 },
                 moveListEntry(index, direction) {
                     const target = index + direction;
@@ -453,9 +535,11 @@
                     const entries = this.listDraft.entries.slice();
                     [entries[index], entries[target]] = [entries[target], entries[index]];
                     this.listDraft.entries = entries;
+                    this.listEntryPage = Math.floor(target / this.listPageSize);
                 },
                 removeListEntry(index) {
                     this.listDraft.entries.splice(index, 1);
+                    this.listEntryPage = Math.min(this.listEntryPage, this.listPageCount - 1);
                 },
                 async saveChannelList() {
                     this.listBusy = true;
@@ -494,9 +578,9 @@
                         const response = await fetch('/api/v1/channel-lists/' + encodeURIComponent(this.selectedListId), { method: 'DELETE' });
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.detail || 'Favoritenliste konnte nicht gelöscht werden.');
-                        if (this.selectedDevice && this.selectedDevice.assigned_channel_list === this.selectedListId) {
+                        if (this.assignmentDevice && this.assignmentDevice.assigned_channel_list === this.selectedListId) {
                             this.assignedListId = '';
-                            this.$set(this.selectedDevice, 'assigned_channel_list', null);
+                            this.$set(this.assignmentDevice, 'assigned_channel_list', null);
                         }
                         this.selectedListId = '';
                         this.listDraft = { name: '', description: '', entries: [] };
@@ -510,11 +594,11 @@
                     }
                 },
                 async assignChannelList() {
-                    if (!this.selectedDeviceId) return;
+                    if (!this.assignmentDeviceId) return;
                     this.assignmentBusy = true;
                     try {
                         const response = await fetch(
-                            '/api/v1/devices/' + encodeURIComponent(this.selectedDeviceId) + '/channel-list',
+                            '/api/v1/devices/' + encodeURIComponent(this.assignmentDeviceId) + '/channel-list',
                             {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
@@ -523,7 +607,7 @@
                         );
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.detail || 'Liste konnte dem Fernseher nicht zugewiesen werden.');
-                        const device = this.devices.find(item => item.id === this.selectedDeviceId);
+                        const device = this.devices.find(item => item.id === this.assignmentDeviceId);
                         if (device) this.$set(device, 'assigned_channel_list', data.list_id);
                         this.listError = false;
                         this.listMessage = 'Liste wurde dem Fernseher zugewiesen.';
