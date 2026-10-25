@@ -236,7 +236,7 @@ fun ZapperOverlay(
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))
                 .padding(horizontal = 48.dp, vertical = 32.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.Top) {
                 Box(
                     Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)).background(SurfaceColor),
                     contentAlignment = Alignment.Center,

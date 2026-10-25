@@ -163,6 +163,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
     var zapCounter by remember { mutableIntStateOf(0) }
     var zapperVisible by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
+    var showingNextProgram by remember { mutableStateOf(false) }
     var numberEntry by remember { mutableStateOf("") }
     LaunchedEffect(zapCounter) {
         if (zapCounter > 0) {
@@ -176,6 +177,8 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
         if (showDetails) {
             delay(10_000)
             showDetails = false
+        } else {
+            showingNextProgram = false
         }
     }
     val onInfoPressed: () -> Unit = {
@@ -251,6 +254,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
     LaunchedEffect(currentChannel?.id) {
         if (currentChannel != null) {
             showDetails = false
+            showingNextProgram = false
             zapCounter++
         }
     }
@@ -276,10 +280,23 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
             // press just clears the focus highlight and a second press is needed.
             .onPreviewKeyEvent { event ->
                 when (event.nativeKeyEvent.keyCode) {
+                    KeyEvent.KEYCODE_INFO -> {
+                        if (overlay == Overlay.GUIDE) {
+                            if (event.type == KeyEventType.KeyUp) {
+                                numberEntry = ""
+                                showDetails = false
+                                overlay = Overlay.NONE
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     KeyEvent.KEYCODE_BACK -> {
                         if (event.type == KeyEventType.KeyUp) {
                             when {
                                 viewModel.dueReminder != null && overlay == Overlay.NONE -> viewModel.dismissReminder()
+                                showDetails && showingNextProgram -> showingNextProgram = false
                                 showDetails -> showDetails = false
                                 overlay == Overlay.SETTINGS -> overlay = Overlay.MENU
                                 overlay != Overlay.NONE -> overlay = Overlay.NONE
@@ -305,7 +322,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     // D-pad and OK navigate the banner's own controls; INFO/GUIDE are ours
                     return@onKeyEvent when (keyCode) {
                         KeyEvent.KEYCODE_INFO -> {
-                            if (event.type == KeyEventType.KeyUp) onInfoPressed()
+                            if (event.type == KeyEventType.KeyUp) showDetails = false
                             true
                         }
                         else -> false
@@ -343,17 +360,13 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                         viewModel.jumpBack()
                     }
                     keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER -> {
-                        // Long-press OK opens the detailed program banner.
-                        val isLongPress =
-                            event.nativeKeyEvent.eventTime - event.nativeKeyEvent.downTime >= 600
                         when {
                             viewModel.dueReminder != null -> viewModel.watchReminder()
                             numberEntry.isNotEmpty() -> commitEntry()
-                            isLongPress -> {
+                            else -> {
                                 zapperVisible = false
                                 showDetails = true
                             }
-                            else -> zapperVisible = false
                         }
                     }
                     keyCode == KeyEvent.KEYCODE_INFO -> onInfoPressed()
@@ -393,6 +406,9 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                 channel = currentChannel,
                 guide = currentGuide,
                 playerState = playerState,
+                showingNextProgram = showingNextProgram,
+                onShowNextProgram = { showingNextProgram = true },
+                onShowCurrentProgram = { showingNextProgram = false },
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }

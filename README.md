@@ -52,7 +52,7 @@ HomelabTV is proof that the TV doesn't need WAN for any of this: live video come
 - Guide opens on the channel you're watching
 - Channel zapper bar with progress and "next up"
 - Direct channel number entry from the remote's number pad
-- Detailed info banner (Info / Options tabs) with audio track and closed-caption selection
+- Detailed info banner (Info / Options tabs) with audio track and closed-caption selection; select the next program to view its details
 - Airing-status badges (New / Rerun / Premiere / Live / News) from XMLTV flags, shown in the info banner and guide
 - Offline-first: last guide sync is cached on the TV as JSON
 - During a paired device's favorites-list sync, the server checks all visible entries across every server favorites list and downloads only their remote channel logos. Cached logos are refreshed only after ten days, with at most one upstream image request every three seconds. Failed requests are marked and retried only after ten days. The app receives only server-local URLs and copies the selected list's images into its persistent logo cache for offline use.

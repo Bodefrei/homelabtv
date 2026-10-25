@@ -65,6 +65,9 @@ fun DetailsBanner(
     channel: PhysicalChannel?,
     guide: ChannelGuide?,
     playerState: TvPlayerState,
+    showingNextProgram: Boolean,
+    onShowNextProgram: () -> Unit,
+    onShowCurrentProgram: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val now = System.currentTimeMillis()
@@ -121,7 +124,14 @@ fun DetailsBanner(
         Spacer(Modifier.height(12.dp))
 
         if (tab == 0) {
-            InfoTab(current = current, next = next, now = now)
+            InfoTab(
+                current = current,
+                next = next,
+                now = now,
+                showingNextProgram = showingNextProgram,
+                onShowNextProgram = onShowNextProgram,
+                onShowCurrentProgram = onShowCurrentProgram,
+            )
         } else {
             OptionsTab(playerState = playerState)
         }
@@ -132,7 +142,19 @@ fun DetailsBanner(
 }
 
 @Composable
-private fun InfoTab(current: Program?, next: Program?, now: Long) {
+private fun InfoTab(
+    current: Program?,
+    next: Program?,
+    now: Long,
+    showingNextProgram: Boolean,
+    onShowNextProgram: () -> Unit,
+    onShowCurrentProgram: () -> Unit,
+) {
+    if (showingNextProgram && next != null) {
+        UpcomingProgramDetails(program = next, onShowCurrentProgram = onShowCurrentProgram)
+        return
+    }
+
     Row {
         if (current?.poster_url != null) {
             AsyncImage(
@@ -208,7 +230,24 @@ private fun InfoTab(current: Program?, next: Program?, now: Long) {
                 Spacer(Modifier.height(12.dp))
                 Text("NEXT UP", color = TextSecondary.copy(alpha = 0.6f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                val interaction = remember { MutableInteractionSource() }
+                val focused by interaction.collectIsFocusedAsState()
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (focused) SurfaceLight else Color.Transparent)
+                        .then(
+                            if (focused) Modifier.border(1.dp, JellyfinBlue, RoundedCornerShape(6.dp))
+                            else Modifier
+                        )
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = null,
+                            onClick = onShowNextProgram,
+                        )
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     if (next.poster_url != null) {
                         AsyncImage(
                             model = next.poster_url,
@@ -252,6 +291,88 @@ private fun InfoTab(current: Program?, next: Program?, now: Long) {
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpcomingProgramDetails(program: Program, onShowCurrentProgram: () -> Unit) {
+    val currentProgramFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(100)
+        try {
+            currentProgramFocus.requestFocus()
+        } catch (_: Exception) {}
+    }
+
+    Column {
+        BannerTab(
+            label = "Zur aktuellen Sendung",
+            selected = false,
+            onClick = onShowCurrentProgram,
+            focusRequester = currentProgramFocus,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row {
+            if (program.poster_url != null) {
+                AsyncImage(
+                    model = program.poster_url,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(width = 104.dp, height = 156.dp).clip(RoundedCornerShape(8.dp)),
+                )
+                Spacer(Modifier.width(20.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    program.title ?: "Keine Programminformation",
+                    color = TextPrimary,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val episodeLine = program.episodeLine()
+                if (episodeLine.isNotEmpty() || program.flag != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlagBadge(program.flag)
+                        if (program.flag != null && episodeLine.isNotEmpty()) Spacer(Modifier.width(8.dp))
+                        if (episodeLine.isNotEmpty()) {
+                            Text(
+                                episodeLine,
+                                color = JellyfinBlue,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                val start = XmltvTime.parse(program.start)
+                val stop = XmltvTime.parse(program.stop)
+                if (start != null && stop != null && stop > start) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "${formatClock(start)}–${formatClock(stop)}",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                    )
+                }
+                if (!program.description.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        program.description,
+                        color = TextSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(0.8f),
+                    )
                 }
             }
         }
