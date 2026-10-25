@@ -29,6 +29,7 @@ data class ChannelGuide(
     val name: String?,
     val logo_url: String?,
     val programs: List<Program>?,
+    val display_number: String? = null,
 ) {
     val safePrograms: List<Program> get() = programs ?: emptyList()
     val displayName: String get() = name ?: physical_channel ?: "?"
@@ -101,8 +102,12 @@ fun List<ChannelGuide>.forChannel(channel: PhysicalChannel?): ChannelGuide? {
  * merged in where a mapping matches), then any server-only channels that didn't
  * match a scanned channel.
  */
-fun mergeGuide(physical: List<PhysicalChannel>, guide: List<ChannelGuide>): List<ChannelGuide> {
-    if (physical.isEmpty()) return guide
+fun mergeGuide(
+    physical: List<PhysicalChannel>,
+    guide: List<ChannelGuide>,
+    restrictToPhysical: Boolean = false,
+): List<ChannelGuide> {
+    if (physical.isEmpty()) return if (restrictToPhysical) emptyList() else guide
     val used = mutableSetOf<ChannelGuide>()
     val rows = mutableListOf<ChannelGuide>()
     for (channel in physical) {
@@ -115,10 +120,11 @@ fun mergeGuide(physical: List<PhysicalChannel>, guide: List<ChannelGuide>): List
                 name = match?.name ?: channel.displayName,
                 logo_url = match?.logo_url,
                 programs = match?.safePrograms ?: emptyList(),
+                display_number = channel.numberForDisplay,
             )
         )
     }
-    rows.addAll(guide.filter { it !in used })
+    if (!restrictToPhysical) rows.addAll(guide.filter { it !in used })
     return rows
 }
 

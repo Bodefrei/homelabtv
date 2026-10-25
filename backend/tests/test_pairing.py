@@ -438,6 +438,10 @@ class PairingApiTests(unittest.TestCase):
             [item["channel_id"] for item in resolved_one.json()["channels"]],
             [120, 110, None],
         )
+        self.assertEqual(
+            [item["list_number"] for item in resolved_one.json()["channels"]],
+            [1, 2, 3],
+        )
         self.assertFalse(resolved_one.json()["channels"][-1]["available"])
         self.assertEqual(
             [item["channel_id"] for item in resolved_two.json()["channels"]],

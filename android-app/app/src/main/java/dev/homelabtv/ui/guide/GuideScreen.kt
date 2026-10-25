@@ -58,8 +58,6 @@ import dev.homelabtv.data.GuideSlot
 import dev.homelabtv.data.Program
 import dev.homelabtv.data.XmltvTime
 import dev.homelabtv.data.buildSlots
-import dev.homelabtv.data.channelMajor
-import dev.homelabtv.data.channelMinor
 import dev.homelabtv.data.episodeLine
 import dev.homelabtv.data.normalizeChannelNumber
 import dev.homelabtv.theme.AppBackground
@@ -125,7 +123,6 @@ fun GuideScreen(
     val rows =
         remember(channels, windowStart) {
             channels
-                .sortedWith(compareBy({ channelMajor(it.physical_channel) }, { channelMinor(it.physical_channel) }))
                 .map { ch ->
                     val slots = buildSlots(ch.safePrograms, windowStart, windowEnd)
                     GridRow(ch, slots, slots.map { FocusRequester() })
@@ -278,7 +275,7 @@ private fun HeroPanel(focused: Pair<ChannelGuide, Program?>?) {
             if (focused != null) {
                 val (channel, program) = focused
                 Text(
-                    "${channel.physical_channel ?: ""} · ${channel.displayName}",
+                    "${channel.display_number ?: channel.physical_channel ?: ""} · ${channel.displayName}",
                     color = JellyfinBlue,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -423,7 +420,7 @@ private fun GuideRow(
             }
             Column {
                 Text(
-                    channel.physical_channel ?: "",
+                    channel.display_number ?: channel.physical_channel ?: "",
                     color = TextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,

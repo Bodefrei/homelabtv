@@ -892,12 +892,13 @@ async def get_current_device_channel_list(request: Request):
             {
                 "logical_channel_id": row[0],
                 "display_name": row[2] or row[1],
+                "list_number": index,
                 "channel_id": row[3],
                 "display_number": row[4],
                 "device_channel_name": row[5],
                 "available": row[3] is not None,
             }
-            for row in rows
+            for index, row in enumerate(rows, start=1)
         ],
     }
 

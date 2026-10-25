@@ -244,7 +244,7 @@ fun ZapperOverlay(
                         )
                     } else {
                         Text(
-                            channel?.displayNumber ?: "",
+                            channel?.numberForDisplay ?: "",
                             color = TextPrimary,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
@@ -255,7 +255,7 @@ fun ZapperOverlay(
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            channel?.displayNumber ?: "",
+                            channel?.numberForDisplay ?: "",
                             color = JellyfinBlue,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,

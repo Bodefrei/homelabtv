@@ -52,6 +52,7 @@ import dev.homelabtv.data.mergeGuide
 import dev.homelabtv.theme.HomelabTVTheme
 import dev.homelabtv.theme.JellyfinBlue
 import dev.homelabtv.ui.MainViewModel
+import dev.homelabtv.ui.ChannelListMode
 import dev.homelabtv.ui.NumberEntryMode
 import dev.homelabtv.ui.guide.GUIDE_MINI_PLAYER_END
 import dev.homelabtv.ui.guide.GUIDE_MINI_PLAYER_HEIGHT
@@ -412,7 +413,11 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
         when (overlay) {
             Overlay.GUIDE ->
                 GuideScreen(
-                    channels = mergeGuide(viewModel.physicalChannels, guideState.channels),
+                    channels = mergeGuide(
+                        viewModel.physicalChannels,
+                        guideState.channels,
+                        restrictToPhysical = viewModel.channelListMode == ChannelListMode.SERVER,
+                    ),
                     isOnline = guideState.isOnline,
                     initialChannelNumber = currentChannel?.displayNumber,
                     onTune = { guide ->
@@ -444,6 +449,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     inventorySyncStatus = viewModel.inventorySyncStatus,
                     inventorySyncInProgress = viewModel.inventorySyncInProgress,
                     channelListStatus = viewModel.channelListStatus,
+                    channelListModeLabel = viewModel.channelListModeLabel,
                     tunerInfo =
                         currentChannel?.let {
                             "${it.displayName} (${it.inputId ?: viewModel.fallbackInputId ?: "no input id"})"
@@ -451,6 +457,7 @@ private fun HomelabApp(viewModel: MainViewModel = viewModel()) {
                     onServerUrlChange = viewModel::updateServerUrl,
                     onPairDevice = viewModel::startDevicePairing,
                     onSyncChannelInventory = { viewModel.syncChannelInventory(forceUpload = true) },
+                    onCycleChannelListMode = viewModel::cycleChannelListMode,
                     onResume = { overlay = Overlay.NONE },
                     onOpenGuide = { overlay = Overlay.GUIDE },
                     onRefresh = { viewModel.refreshNow() },

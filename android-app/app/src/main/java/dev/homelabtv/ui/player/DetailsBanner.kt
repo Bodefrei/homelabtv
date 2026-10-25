@@ -94,7 +94,7 @@ fun DetailsBanner(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "${channel?.displayNumber ?: ""} · ${guide?.displayName ?: channel?.displayName ?: ""}",
+                "${channel?.numberForDisplay ?: ""} · ${guide?.displayName ?: channel?.displayName ?: ""}",
                 color = JellyfinBlue,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,

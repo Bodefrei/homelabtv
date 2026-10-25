@@ -61,10 +61,12 @@ fun MenuOverlay(
     inventorySyncStatus: String,
     inventorySyncInProgress: Boolean,
     channelListStatus: String,
+    channelListModeLabel: String,
     tunerInfo: String,
     onServerUrlChange: (String) -> Unit,
     onPairDevice: () -> Unit,
     onSyncChannelInventory: () -> Unit,
+    onCycleChannelListMode: () -> Unit,
     onResume: () -> Unit,
     onOpenGuide: () -> Unit,
     onRefresh: () -> Unit,
@@ -154,6 +156,12 @@ fun MenuOverlay(
                 }
                 Spacer(Modifier.height(16.dp))
                 MenuListItem("Reload Channel List", Icons.Default.Refresh, onReloadChannels, focusRequester = firstItem)
+                MenuListItem(channelListModeLabel, Icons.AutoMirrored.Filled.List, onCycleChannelListMode)
+                Text(
+                    "Die Serverliste wird nur verwendet, wenn du sie hier auswählst.",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                )
                 MenuListItem("Scan Channels (TV Setup)", Icons.Default.Search, onScanChannels)
                 MenuListItem(entryModeLabel, Icons.Default.Edit, onCycleEntryMode)
                 if (quickThresholdLabel != null) {

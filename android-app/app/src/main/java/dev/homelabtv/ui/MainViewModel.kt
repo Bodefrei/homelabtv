@@ -46,6 +46,11 @@ enum class NumberEntryMode {
     QUICK,
 }
 
+enum class ChannelListMode {
+    TV,
+    SERVER,
+}
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("homelab_prefs", Context.MODE_PRIVATE)
@@ -60,6 +65,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var scannedChannels = emptyList<PhysicalChannel>()
     private var favoriteChannelIds: List<Long>? = null
+    private var favoriteChannelNumbers: Map<Long, String> = emptyMap()
 
     var currentChannelIndex by mutableIntStateOf(0)
         private set
@@ -89,6 +95,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var channelListStatus by mutableStateOf("")
+        private set
+
+    var channelListMode by mutableStateOf(
+        prefs.getString("channel_list_mode", ChannelListMode.TV.name)
+            ?.let { runCatching { ChannelListMode.valueOf(it) }.getOrNull() }
+            ?: ChannelListMode.TV
+    )
         private set
 
     var inventorySyncInProgress by mutableStateOf(false)
@@ -122,14 +135,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun lineupMajors(): Set<String> =
         physicalChannels
-            .map { normalizeChannelNumber(it.displayNumber).substringBefore('.') }
+            .map { normalizeChannelNumber(it.numberForDisplay).substringBefore('.') }
             .map { it.trimStart('0').ifEmpty { "0" } }
             .toSet()
 
     private fun lineupMinors(major: Int): Set<String> =
         physicalChannels
-            .filter { channelMajor(it.displayNumber) == major }
-            .map { normalizeChannelNumber(it.displayNumber).substringAfter('.', "") }
+            .filter { channelMajor(it.numberForDisplay) == major }
+            .map { normalizeChannelNumber(it.numberForDisplay).substringAfter('.', "") }
             .filter { it.isNotEmpty() }
             .toSet()
 
@@ -197,6 +210,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refreshGuideAndChannelList() }
     }
 
+    fun cycleChannelListMode() {
+        channelListMode =
+            if (channelListMode == ChannelListMode.TV) ChannelListMode.SERVER else ChannelListMode.TV
+        prefs.edit().putString("channel_list_mode", channelListMode.name).apply()
+        applyFavoriteChannelOrder()
+        if (channelListMode == ChannelListMode.SERVER) {
+            channelListStatus = "Server-Favoritenliste wird geladen …"
+            viewModelScope.launch {
+                val credential =
+                    try {
+                        deviceCredentialStore.credential()
+                    } catch (e: Exception) {
+                        channelListStatus = "Geräteanmeldung kann nicht gelesen werden: ${e.message ?: "Keystore-Fehler"}"
+                        return@launch
+                    }
+                if (credential == null) {
+                    channelListStatus = "Für Server-Favoriten muss dieser Fernseher gekoppelt sein."
+                    return@launch
+                }
+                refreshDeviceChannelList(credential)
+            }
+        } else {
+            channelListStatus = "TV-Kanalliste wird verwendet."
+        }
+    }
+
+    val channelListModeLabel: String
+        get() =
+            if (channelListMode == ChannelListMode.SERVER) {
+                "Senderliste: Server-Favoriten"
+            } else {
+                "Senderliste: Fernseher"
+            }
+
     private suspend fun refreshGuideAndChannelList() {
         val credential =
             try {
@@ -235,35 +282,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 null
             }
+        favoriteChannelNumbers =
+            if (response.active) {
+                response.channels
+                    .mapIndexedNotNull { index, channel ->
+                        channel.channel_id?.let { it to (channel.list_number ?: index + 1).toString() }
+                    }
+                    .toMap()
+            } else {
+                emptyMap()
+            }
         applyFavoriteChannelOrder()
         channelListStatus =
-            if (response.active) {
+            if (channelListMode == ChannelListMode.TV) {
+                "TV-Kanalliste wird verwendet. Die Server-Favoritenliste ist verfügbar."
+            } else if (response.active) {
                 "Favoritenliste „${response.name ?: "Unbenannt"}“ geladen: ${physicalChannels.size} von ${response.channels.size} Sendern verfügbar."
             } else {
-                "Keine Favoritenliste zugewiesen; alle empfangbaren Sender werden verwendet."
+                "Dem Fernseher ist keine Server-Favoritenliste zugewiesen; die TV-Kanalliste bleibt aktiv."
             }
     }
 
     private fun applyFavoriteChannelOrder() {
-        val currentNumber = currentChannel?.displayNumber
+        val currentChannelId = currentChannel?.id
         physicalChannels =
-            favoriteChannelIds?.let { ids ->
-                ids.mapNotNull { id -> scannedChannels.firstOrNull { it.id == id } }
-            } ?: scannedChannels
+            if (channelListMode == ChannelListMode.SERVER && favoriteChannelIds != null) {
+                favoriteChannelIds.orEmpty().mapNotNull { id ->
+                    scannedChannels.firstOrNull { it.id == id }
+                        ?.copy(serverListNumber = favoriteChannelNumbers[id])
+                }
+            } else {
+                scannedChannels
+            }
         currentChannelIndex =
-            currentNumber?.let { indexOfChannelNumber(it) }
+            currentChannelId?.let { id -> physicalChannels.indexOfFirst { it.id == id }.takeIf { it >= 0 } }
                 ?: restoreLastChannelIndex()
     }
 
     /** Re-query TvContract, e.g. after READ_TV_LISTINGS is granted or a channel rescan. */
     fun reloadChannels(forceInventoryUpload: Boolean = false) {
-        val stayOn = currentChannel?.displayNumber
+        val stayOn = currentChannel?.id
         scannedChannels = channelRepository.getPhysicalChannels()
         applyFavoriteChannelOrder()
         // Keep the viewer on the same channel number across a rescan when it still
         // exists; otherwise fall back to whatever we last persisted, then index 0.
         currentChannelIndex =
-            stayOn?.let { indexOfChannelNumber(it) }
+            stayOn?.let { id -> physicalChannels.indexOfFirst { it.id == id }.takeIf { it >= 0 } }
                 ?: restoreLastChannelIndex()
         syncChannelInventory(forceUpload = forceInventoryUpload)
     }
@@ -483,9 +547,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    private fun majorOf(channel: PhysicalChannel): Int = channelMajor(channel.displayNumber)
+    private fun majorOf(channel: PhysicalChannel): Int = channelMajor(channel.numberForDisplay)
 
-    private fun minorOf(channel: PhysicalChannel): Int = channelMinor(channel.displayNumber)
+    private fun minorOf(channel: PhysicalChannel): Int = channelMinor(channel.numberForDisplay)
 
     /** Tune to the physical channel a guide row is mapped to. False if no tuner match. */
     fun tuneTo(guide: ChannelGuide): Boolean {
